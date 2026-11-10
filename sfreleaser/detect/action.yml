@@ -1,0 +1,43 @@
+name: sfreleaser detect
+description: Install sfreleaser and detect the version a pull request releases from its changelog
+inputs:
+  version:
+    description: sfreleaser version to install, "latest" for the latest release
+    required: false
+    default: latest
+  before:
+    description: Git revision of the changelog to compare with, sfreleaser's default when empty
+    required: false
+    default: ""
+outputs:
+  version:
+    description: Version to release, empty when nothing is released
+    value: ${{ steps.detect.outputs.version }}
+  is_release_pr:
+    description: '"true" when a version is released, empty otherwise'
+    value: ${{ steps.detect.outputs.is_release_pr }}
+  variant:
+    description: Project variant in lowercase, like "chain"
+    value: ${{ steps.detect.outputs.variant }}
+  preview_comment:
+    description: Markdown announcing the version with its release notes
+    value: ${{ steps.detect.outputs.preview_comment }}
+runs:
+  using: composite
+  steps:
+    - name: Install sfreleaser
+      shell: bash
+      env:
+        SFRELEASER_VERSION: ${{ inputs.version }}
+      run: |
+        url="https://github.com/streamingfast/sfreleaser/releases/download/$SFRELEASER_VERSION"
+        if [[ "$SFRELEASER_VERSION" == "latest" ]]; then url="https://github.com/streamingfast/sfreleaser/releases/latest/download"; fi
+        curl -sSfL "$url/sfreleaser_linux_x86_64.tar.gz" | tar -xz -C "$RUNNER_TEMP" sfreleaser
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    - name: Detect version
+      id: detect
+      shell: bash
+      env:
+        BEFORE: ${{ inputs.before }}
+      run: sfreleaser release detect ${BEFORE:+--before "$BEFORE"}

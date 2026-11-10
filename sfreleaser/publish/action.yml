@@ -1,0 +1,41 @@
+name: sfreleaser publish
+description: Publish the release of a merged pull request and start the build workflow on its tag, runs after sfreleaser/detect
+inputs:
+  version:
+    description: Version to release, the version output of sfreleaser/detect
+    required: true
+  variant:
+    description: The variant output of sfreleaser/detect, no build is started for "chain"
+    required: false
+    default: ""
+  build-workflow:
+    description: Workflow started on the tag, like docker.yml, none when empty
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token
+    required: false
+    default: ${{ github.token }}
+  homebrew-tap-token:
+    description: Homebrew tap token
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Publish release
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        HOMEBREW_TAP_TOKEN: ${{ inputs.homebrew-tap-token }}
+      run: sfreleaser release publish "$VERSION"
+
+    - name: Start ${{ inputs.build-workflow }} on the tag
+      if: inputs.build-workflow != '' && inputs.variant != 'chain'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        WORKFLOW: ${{ inputs.build-workflow }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: gh workflow run "$WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$VERSION"

@@ -1,0 +1,29 @@
+name: sfreleaser prepare
+description: Prepare the release of a pull request, runs after sfreleaser/detect
+inputs:
+  version:
+    description: Version to release, the version output of sfreleaser/detect
+    required: true
+  args:
+    description: Extra arguments, like --allow-dirty
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token
+    required: false
+    default: ${{ github.token }}
+  homebrew-tap-token:
+    description: Homebrew tap token
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Prepare release
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ARGS: ${{ inputs.args }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        HOMEBREW_TAP_TOKEN: ${{ inputs.homebrew-tap-token }}
+      run: sfreleaser release prepare "$VERSION" --yes $ARGS
