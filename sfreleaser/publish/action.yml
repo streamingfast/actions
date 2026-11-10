@@ -4,10 +4,6 @@ inputs:
   version:
     description: Version to release, the version output of sfreleaser/detect
     required: true
-  variant:
-    description: The variant output of sfreleaser/detect, no build is started for "chain"
-    required: false
-    default: ""
   build-workflow:
     description: Workflow started on the tag, like docker.yml, none when empty
     required: false
@@ -32,7 +28,7 @@ runs:
       run: sfreleaser release publish "$VERSION"
 
     - name: Start ${{ inputs.build-workflow }} on the tag
-      if: inputs.build-workflow != '' && inputs.variant != 'chain'
+      if: inputs.build-workflow != ''
       shell: bash
       env:
         VERSION: ${{ inputs.version }}

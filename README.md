@@ -8,9 +8,9 @@ Releases a project from its `CHANGELOG.md` with [sfreleaser](https://github.com/
 
 | Action | Purpose |
 |---|---|
-| `sfreleaser/detect` | Installs sfreleaser, outputs `version`, `is_release_pr`, `variant` and `preview_comment` |
+| `sfreleaser/detect` | Installs sfreleaser (`sfreleaser-version`, latest by default), outputs `version`, `is_release_pr` and `preview_comment` |
 | `sfreleaser/prepare` | Runs `sfreleaser release prepare` |
-| `sfreleaser/publish` | Runs `sfreleaser release publish`, then starts `build-workflow` on the tag unless the variant is `chain` |
+| `sfreleaser/publish` | Runs `sfreleaser release publish`, then starts `build-workflow` on the tag when set |
 
 A tag made with the GitHub Actions token triggers no workflow, so `publish` starts the build workflow itself. That workflow needs a `workflow_dispatch` trigger and must exist on the default branch.
 
@@ -45,7 +45,7 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
-      - name: Detect version
+      - name: Detect release PR
         id: detect
         uses: streamingfast/actions/sfreleaser/detect@v1
 
@@ -92,7 +92,7 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
-      - name: Detect version
+      - name: Detect release PR
         id: detect
         uses: streamingfast/actions/sfreleaser/detect@v1
         with:
@@ -103,7 +103,6 @@ jobs:
         uses: streamingfast/actions/sfreleaser/publish@v1
         with:
           version: ${{ steps.detect.outputs.version }}
-          variant: ${{ steps.detect.outputs.variant }}
           build-workflow: docker.yml
           homebrew-tap-token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```
