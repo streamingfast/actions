@@ -57,7 +57,26 @@ jobs:
           homebrew-tap-token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```
 
-A Go application sets up Go before `Prepare release` (`actions/setup-go`, and the `~/.cache/sfreleaser` and `~/.cache/zig` cache).
+A Go application built with `builder: native` adds these steps before `Prepare release`:
+
+```yaml
+      - name: Set up Go
+        if: steps.detect.outputs.is_release_pr
+        uses: actions/setup-go@v6
+        with:
+          # Go 1.27.4 rejects the libwasmtime.a bundled with wasmtime-go (disallowed LTO section ".llvmbc").
+          go-version: '1.27.3'
+
+      - name: Cache zig
+        if: steps.detect.outputs.is_release_pr
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/sfreleaser
+            ~/.cache/zig
+          key: ${{ runner.os }}-zig-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-zig-
+```
 
 ### `.github/workflows/publish-release.yml`
 
