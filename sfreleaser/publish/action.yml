@@ -1,6 +1,10 @@
 name: sfreleaser publish
 description: Publish the release of a merged pull request and start the build workflow on its tag, runs after sfreleaser/detect
 inputs:
+  sfreleaser-version:
+    description: sfreleaser version to install when sfreleaser/detect did not run (a re-run of the publish), "latest" for the latest release
+    required: false
+    default: latest
   version:
     description: Version to release, the version output of sfreleaser/detect
     required: true
@@ -16,15 +20,31 @@ inputs:
     description: Homebrew tap token
     required: false
     default: ""
+  cargo-registry-token:
+    description: crates.io token, the output of rust-lang/crates-io-auth-action for Trusted Publishing
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
+    - name: Install sfreleaser
+      shell: bash
+      env:
+        SFRELEASER_VERSION: ${{ inputs.sfreleaser-version }}
+      run: |
+        if command -v sfreleaser >/dev/null; then exit 0; fi
+        url="https://github.com/streamingfast/sfreleaser/releases/download/$SFRELEASER_VERSION"
+        if [[ "$SFRELEASER_VERSION" == "latest" ]]; then url="https://github.com/streamingfast/sfreleaser/releases/latest/download"; fi
+        curl -sSfL "$url/sfreleaser_linux_x86_64.tar.gz" | tar -xz -C "$RUNNER_TEMP" sfreleaser
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
     - name: Publish release
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         HOMEBREW_TAP_TOKEN: ${{ inputs.homebrew-tap-token }}
+        CARGO_REGISTRY_TOKEN: ${{ inputs.cargo-registry-token }}
       run: sfreleaser release publish "$VERSION"
 
     - name: Start ${{ inputs.build-workflow }} on the tag
