@@ -19,6 +19,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Show sfreleaser
+      shell: bash
+      run: |
+        if ! command -v sfreleaser >/dev/null; then
+          echo "::error::sfreleaser is not installed, run sfreleaser/detect before sfreleaser/prepare"
+          exit 1
+        fi
+        echo "Using already installed $(sfreleaser --version 2>&1 || echo "sfreleaser (version unknown)") at $(command -v sfreleaser)"
+
     - name: Prepare release
       shell: bash
       env:
