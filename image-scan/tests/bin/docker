@@ -2,7 +2,7 @@
 # Fake docker for run.sh. State lives in $FAKE_DIR:
 #   login-fails     number of `docker login` calls still failing
 #   <image>.rc      exit code of `docker run ... <image>` (default 0), <image> with / and : replaced by _
-#   <image>.sarif   file written to the --output when the format is sarif
+#   <image>.sarif   file written to stdout when the format is sarif
 #   docker.log      one line per call
 echo "$*" >>"${FAKE_DIR}/docker.log"
 case "$1" in
@@ -15,21 +15,21 @@ case "$1" in
   run)
     echo "hub_user=${DOCKER_SCOUT_HUB_USER} registry_user=${DOCKER_SCOUT_REGISTRY_USER} docker_config=${DOCKER_CONFIG}" >>"${FAKE_DIR}/docker.log"
     args=("$@")
-    out_dir="" output="" format="" image="${args[-1]}"
+    format="" image="${args[-1]}"
     for ((i = 0; i < ${#args[@]}; i++)); do
       case "${args[i]}" in
-        -v) [[ "${args[i + 1]}" == *:/out ]] && out_dir="${args[i + 1]%:/out}" ;;
-        --output) output="${args[i + 1]#/out/}" ;;
+        --output) echo "fake docker: --output must not be used" >&2; exit 64 ;;
         --format) format="${args[i + 1]}" ;;
       esac
     done
     key="${image//[\/:]/_}"
     rc="$(cat "${FAKE_DIR}/${key}.rc" 2>/dev/null || echo 0)"
     if [[ "${rc}" == 2 ]]; then
-      if [[ "${format}" == sarif ]]; then cp "${FAKE_DIR}/${key}.sarif" "${out_dir}/${output}"; else echo "# findings in ${image}" >"${out_dir}/${output}"; fi
+      if [[ "${format}" == sarif ]]; then cat "${FAKE_DIR}/${key}.sarif"; else echo "# findings in ${image}"; fi
     elif [[ "${rc}" == 0 ]]; then
-      echo "no findings" >"${out_dir}/${output}"
+      echo "no findings"
     fi
+    echo "pulling progress on stderr" >&2
     exit "${rc}"
     ;;
 esac

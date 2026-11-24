@@ -35,7 +35,9 @@ setup() {
 setup
 "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
 check "scanner: clean image exits 0" test $? -eq 0
-check "scanner: mounts the output dir and passes severities" logged "--only-severity critical,high" docker.log
+check "scanner: passes severities" logged "--only-severity critical,high" docker.log
+check "scanner: no --output nor bind mount of the report dir" not_logged -e "--output\|:/out" docker.log
+check "scanner: stdout is the report, stderr stays out of it" test "$(cat "${FAKE_DIR}/r.md")" = "no findings"
 check "scanner: passes the hub auth env by name" logged "hub_user=u" docker.log
 check "scanner: passwords are not on the command line" not_logged "=p" docker.log
 check "scanner: login uses a private docker config" logged "docker_config=/" docker.log
@@ -63,6 +65,11 @@ echo 2 >"${FAKE_DIR}/img_1.rc"
 check "scanner: findings exit 2" test $? -eq 2
 check "scanner: findings are not retried" count "^run " docker.log 1
 check "scanner: findings report written" test -s "${FAKE_DIR}/r.md"
+
+setup
+echo 2 >"${FAKE_DIR}/img_1.rc"
+chmod 0600 "${FAKE_DIR}/r.md" 2>/dev/null; : >"${FAKE_DIR}/r.md"; chmod 0400 "${FAKE_DIR}/r.md"
+[[ -w "${FAKE_DIR}/r.md" ]] || { IMAGE_SCAN_RETRIES=2 "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1; check "scanner: unwritable report is an infra failure, not a finding" test $? -eq 10; }
 
 setup
 echo 2 >"${FAKE_DIR}/login-fails"
