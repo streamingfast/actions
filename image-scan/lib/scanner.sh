@@ -56,20 +56,22 @@ attempt() {
   printf '%s' "${IMAGE_SCAN_DOCKERHUB_PASSWORD}" | docker login --username "${IMAGE_SCAN_DOCKERHUB_USER}" --password-stdin >/dev/null || return 10
   docker pull --quiet "${SCANNER_IMAGE}" >/dev/null || return 10
 
-  local out_dir out_name rc
-  out_dir="$(cd "$(dirname "${output}")" && pwd)"
-  out_name="$(basename "${output}")"
+  local rc
 
   # The Docker socket lets the scanner find images only present in the local store (PR builds use `load: true`).
   # It gives the container control of the runner's daemon: acceptable on an ephemeral runner with an image pinned by digest.
   # Credentials are passed by name so they stay out of the process list.
+  #
+  # The report is not written by the container (--output): the scanner image runs as the non-root 'docker-scout' user
+  # and cannot open a file created by the runner user (mktemp makes it 0600). Scout prints progress and logs on stderr
+  # and only the report on stdout, so the host redirects stdout. No -t, which would merge the two streams. A redirect
+  # that cannot be opened fails before docker runs (exit 1, retried), it can never mask a finding (exit 2).
   DOCKER_SCOUT_HUB_USER="${IMAGE_SCAN_DOCKERHUB_USER}" \
   DOCKER_SCOUT_HUB_PASSWORD="${IMAGE_SCAN_DOCKERHUB_PASSWORD}" \
   DOCKER_SCOUT_REGISTRY_USER="${IMAGE_SCAN_REGISTRY_USER:-}" \
   DOCKER_SCOUT_REGISTRY_PASSWORD="${IMAGE_SCAN_REGISTRY_PASSWORD:-}" \
   docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "${out_dir}:/out" \
     -e DOCKER_SCOUT_HUB_USER \
     -e DOCKER_SCOUT_HUB_PASSWORD \
     ${registry_env[@]+"${registry_env[@]}"} \
@@ -77,8 +79,7 @@ attempt() {
       --only-severity "${severities}" \
       --exit-code \
       --format "${format}" \
-      --output "/out/${out_name}" \
-      "${image}"
+      "${image}" >"${output}"
   rc=$?
   return "${rc}"
 }
