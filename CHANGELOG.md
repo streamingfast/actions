@@ -9,7 +9,7 @@
 
 ### Changed
 
-- Change `sfreleaser/detect` and `sfreleaser/publish` to log the sfreleaser version they install (resolving `latest` to its tag), the download URL and how long it took, and `publish` to log which sfreleaser it reuses when one is already installed
+- Change `sfreleaser/detect` and `sfreleaser/publish` to log the sfreleaser version they install (resolving `latest` to its tag), the download URL and how long it took, and `prepare` and `publish` to log which sfreleaser (version and path) they reuse when one is already installed
 - Change the sfreleaser download to retry 3 times with a 20s connect timeout and a 120s overall limit, instead of waiting on a stalled connection
 
 ### Fixed
