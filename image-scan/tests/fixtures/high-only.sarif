@@ -1,0 +1,4 @@
+{"version": "2.1.0", "runs": [{"tool": {"driver": {"rules": [
+  {"id": "CVE-2025-0002", "properties": {"cvssV3_severity": "HIGH"}},
+  {"id": "CVE-2025-0006", "properties": {"cvssV3_severity": "HIGH"}}
+]}}}]}

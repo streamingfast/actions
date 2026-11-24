@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Fake gh for run.sh. State lives in $FAKE_DIR: issues.json (gh issue list), comments.json (PR comments), gh.log.
+# FAKE_GH_FAIL=<subcommand> makes `gh <subcommand> ...` fail, like "issue edit".
+echo "$*" >>"${FAKE_DIR}/gh.log"
+if [[ -n "${FAKE_GH_FAIL:-}" && "$1 $2" == "${FAKE_GH_FAIL}" ]]; then exit 1; fi
+
+case "$1 $2" in
+  "release view")
+    if [[ "$*" == *tagName* ]]; then echo "v1.2.3"; else echo "2026-01-02"; fi
+    ;;
+  "issue list") cat "${FAKE_DIR}/issues.json" ;;
+  "issue create") echo "https://github.com/o/r/issues/99" ;;
+  "api --paginate") cat "${FAKE_DIR}/comments.json" ;;
+esac

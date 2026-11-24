@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Fake docker for run.sh. State lives in $FAKE_DIR:
+#   login-fails     number of `docker login` calls still failing
+#   <image>.rc      exit code of `docker run ... <image>` (default 0), <image> with / and : replaced by _
+#   <image>.sarif   file written to the --output when the format is sarif
+#   docker.log      one line per call
+echo "$*" >>"${FAKE_DIR}/docker.log"
+case "$1" in
+  login)
+    cat >/dev/null
+    n="$(cat "${FAKE_DIR}/login-fails" 2>/dev/null || echo 0)"
+    if ((n > 0)); then echo $((n - 1)) >"${FAKE_DIR}/login-fails"; exit 1; fi
+    ;;
+  pull) ;;
+  run)
+    echo "hub_user=${DOCKER_SCOUT_HUB_USER} registry_user=${DOCKER_SCOUT_REGISTRY_USER} docker_config=${DOCKER_CONFIG}" >>"${FAKE_DIR}/docker.log"
+    args=("$@")
+    out_dir="" output="" format="" image="${args[-1]}"
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      case "${args[i]}" in
+        -v) [[ "${args[i + 1]}" == *:/out ]] && out_dir="${args[i + 1]%:/out}" ;;
+        --output) output="${args[i + 1]#/out/}" ;;
+        --format) format="${args[i + 1]}" ;;
+      esac
+    done
+    key="${image//[\/:]/_}"
+    rc="$(cat "${FAKE_DIR}/${key}.rc" 2>/dev/null || echo 0)"
+    if [[ "${rc}" == 2 ]]; then
+      if [[ "${format}" == sarif ]]; then cp "${FAKE_DIR}/${key}.sarif" "${out_dir}/${output}"; else echo "# findings in ${image}" >"${out_dir}/${output}"; fi
+    elif [[ "${rc}" == 0 ]]; then
+      echo "no findings" >"${out_dir}/${output}"
+    fi
+    exit "${rc}"
+    ;;
+esac
