@@ -1,0 +1,12 @@
+{
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {"name": "docker scout", "rules": [
+      {"id": "CVE-2025-0001", "properties": {"cvssV3_severity": "CRITICAL", "security-severity": "9.8"}},
+      {"id": "CVE-2025-0002", "properties": {"cvssV3_severity": "HIGH"}},
+      {"id": "CVE-2025-0003", "properties": {"security-severity": "9.1"}},
+      {"id": "CVE-2025-0004"}
+    ]}},
+    "results": [{"ruleId": "CVE-2025-0001"}, {"ruleId": "CVE-2025-0002"}, {"ruleId": "CVE-2025-0005"}]
+  }]
+}

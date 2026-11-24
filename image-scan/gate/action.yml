@@ -1,0 +1,96 @@
+name: image-scan gate
+description: Fail the build when a container image has critical/high vulnerabilities, report to the job summary and the pull request
+inputs:
+  image:
+    description: |
+      Image to scan, like ghcr.io/org/repo:1.2.3-amd64, pushed or loaded in the local Docker daemon (pull request builds).
+      Built from image-repository when empty, as <image-repository>:<tag name, or the first 7 characters of the commit>-<runner architecture>,
+      the tags of the StreamingFast docker workflows
+    required: false
+    default: ""
+  image-repository:
+    description: Image repository without tag, used when image is empty
+    required: false
+    default: ghcr.io/${{ github.repository }}
+  dockerhub-user:
+    description: Docker Hub user, required by the scanner (pull of the scanner image and authentication)
+    required: true
+  dockerhub-password:
+    description: Docker Hub password or personal access token
+    required: true
+  registry-user:
+    description: User to read the image from its registry
+    required: false
+    default: ${{ github.actor }}
+  registry-password:
+    description: Password to read the image from its registry
+    required: false
+    default: ${{ github.token }}
+  severities:
+    description: Comma separated severities that fail the scan
+    required: false
+    default: critical,high
+  retries:
+    description: Attempts for infrastructure failures (login, pull, authentication, database fetch). Findings are never retried
+    required: false
+    default: "3"
+  scan-paths:
+    description: |
+      Newline separated extended regular expressions (anchor with ^). On a pull_request the scan is skipped unless a changed
+      file matches one, the image build is the caller's and runs either way. Empty always scans. The caller must check out
+      with fetch-depth: 2 so HEAD^1 (the base branch) exists
+    required: false
+    default: ""
+  github-token:
+    description: Token posting the pull request comment, needs the pull-requests write permission. The comment is authored by the token owner, pass a bot user token to post as that user
+    required: false
+    default: ${{ github.token }}
+outputs:
+  scanned:
+    description: '"true" when the scan was needed and started, "false" when scan-paths skipped it, a failed scan fails the action anyway'
+    value: ${{ steps.scope.outputs.scan }}
+runs:
+  using: composite
+  steps:
+    - name: Check if the scan is needed
+      id: scope
+      shell: bash
+      env:
+        SCAN_PATHS: ${{ inputs.scan-paths }}
+      run: ${{ github.action_path }}/scope.sh
+
+    - name: Resolve the image
+      id: image
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        IMAGE_REPOSITORY: ${{ inputs.image-repository }}
+      run: ${{ github.action_path }}/image.sh
+
+    - name: Scan the image
+      id: scan
+      if: steps.scope.outputs.scan == 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        IMAGE_SCAN_DOCKERHUB_USER: ${{ inputs.dockerhub-user }}
+        IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ inputs.dockerhub-password }}
+        IMAGE_SCAN_REGISTRY_USER: ${{ inputs.registry-user }}
+        IMAGE_SCAN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+        IMAGE_SCAN_SEVERITIES: ${{ inputs.severities }}
+        IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+      run: |
+        report="$(mktemp "${RUNNER_TEMP}/image-scan-XXXXXX.md")"
+        echo "report=${report}" >> "$GITHUB_OUTPUT"
+        ${{ github.action_path }}/../lib/scanner.sh "$IMAGE" "$report"
+
+    - name: Publish the scan report
+      if: ${{ !cancelled() && (steps.scan.outcome == 'success' || steps.scan.outcome == 'failure') }}
+      continue-on-error: true
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        REPORT: ${{ steps.scan.outputs.report }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT"
