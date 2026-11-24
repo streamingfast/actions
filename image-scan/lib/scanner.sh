@@ -58,8 +58,7 @@ attempt() {
 
   local rc
 
-  # The Docker socket lets the scanner find images only present in the local store (PR builds use `load: true`).
-  # It gives the container control of the runner's daemon: acceptable on an ephemeral runner with an image pinned by digest.
+  # No Docker socket is mounted: the scanner pulls the image from its registry, which must be readable by the scanner.
   # Credentials are passed by name so they stay out of the process list.
   #
   # The report is not written by the container (--output): the scanner image runs as the non-root 'docker-scout' user
@@ -71,7 +70,6 @@ attempt() {
   DOCKER_SCOUT_REGISTRY_USER="${IMAGE_SCAN_REGISTRY_USER:-}" \
   DOCKER_SCOUT_REGISTRY_PASSWORD="${IMAGE_SCAN_REGISTRY_PASSWORD:-}" \
   docker run --rm \
-    -v /var/run/docker.sock:/var/run/docker.sock \
     -e DOCKER_SCOUT_HUB_USER \
     -e DOCKER_SCOUT_HUB_PASSWORD \
     ${registry_env[@]+"${registry_env[@]}"} \

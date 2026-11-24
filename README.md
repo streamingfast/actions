@@ -159,7 +159,7 @@ Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-pas
 
 | Input | Default | |
 |---|---|---|
-| `image` | `<image-repository>:<tag or commit[:7]>-<runner arch>` | Image to scan, pushed or loaded in the local Docker daemon. The default is the tag of the StreamingFast docker workflows: the tag name on a tag build, the first 7 characters of the commit otherwise, `amd64` or `arm64` from the runner |
+| `image` | `<image-repository>:<tag or commit[:7]>-<runner arch>` | Image to scan, it must be pushed to a registry the scanner can read (the runner's local Docker daemon is not visible to the scanner). The default is the tag of the StreamingFast docker workflows: the tag name on a tag build, the first 7 characters of the commit otherwise, `amd64` or `arm64` from the runner |
 | `image-repository` | `ghcr.io/<repository>` | Used when `image` is empty |
 | `dockerhub-user`, `dockerhub-password` | required | Docker Hub credentials |
 | `registry-user`, `registry-password` | `github.actor`, `github.token` | To read the image from its registry |

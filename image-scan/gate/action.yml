@@ -3,7 +3,7 @@ description: Fail the build when a container image has critical/high vulnerabili
 inputs:
   image:
     description: |
-      Image to scan, like ghcr.io/org/repo:1.2.3-amd64, pushed or loaded in the local Docker daemon (pull request builds).
+      Image to scan, like ghcr.io/org/repo:1.2.3-amd64, already pushed to a registry the scanner can read (an image only in the runner's local Docker daemon is not found).
       Built from image-repository when empty, as <image-repository>:<tag name, or the first 7 characters of the commit>-<runner architecture>,
       the tags of the StreamingFast docker workflows
     required: false

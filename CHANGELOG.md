@@ -10,3 +10,7 @@
 ### Fixed
 
 - Fix `image-scan/gate` and `image-scan/weekly` always failing with `permission denied` when writing the report: the scanner container runs as a non-root user and could not open the runner's `0600` report file, the report is now captured from the container's stdout on the host
+
+### Security
+
+- Stop mounting the runner's Docker socket in the `image-scan` scanner container: it runs as non-root and could not use it anyway, the image is pulled from the registry, so it must be pushed before the scan
