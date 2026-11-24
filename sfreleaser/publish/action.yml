@@ -32,10 +32,22 @@ runs:
       env:
         SFRELEASER_VERSION: ${{ inputs.sfreleaser-version }}
       run: |
-        if command -v sfreleaser >/dev/null; then exit 0; fi
-        url="https://github.com/streamingfast/sfreleaser/releases/download/$SFRELEASER_VERSION"
-        if [[ "$SFRELEASER_VERSION" == "latest" ]]; then url="https://github.com/streamingfast/sfreleaser/releases/latest/download"; fi
-        curl -sSfL "$url/sfreleaser_linux_x86_64.tar.gz" | tar -xz -C "$RUNNER_TEMP" sfreleaser
+        if command -v sfreleaser >/dev/null; then
+          echo "Using already installed $(sfreleaser --version 2>&1 || echo "sfreleaser (version unknown)") at $(command -v sfreleaser)"
+          exit 0
+        fi
+        curl_args=(-sSfL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120)
+        version="$SFRELEASER_VERSION"
+        if [[ "$version" == "latest" ]]; then
+          latest=$(curl "${curl_args[@]}" -o /dev/null -w '%{url_effective}' "https://github.com/streamingfast/sfreleaser/releases/latest")
+          version="${latest##*/}"
+          echo "Resolved sfreleaser latest to $version"
+        fi
+        url="https://github.com/streamingfast/sfreleaser/releases/download/$version/sfreleaser_linux_x86_64.tar.gz"
+        echo "Downloading sfreleaser $version from $url"
+        start=$SECONDS
+        curl "${curl_args[@]}" "$url" | tar -xz -C "$RUNNER_TEMP" sfreleaser
+        echo "Installed $("$RUNNER_TEMP/sfreleaser" --version 2>/dev/null || echo "sfreleaser $version") in $((SECONDS - start))s"
         echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
     - name: Publish release
