@@ -45,27 +45,17 @@ inputs:
 outputs:
   slack-message:
     description: Multiline message listing the issues opened by this run, empty when none was opened
-    value: ${{ steps.issues.outputs.slack-message }}
+    value: ${{ steps.run.outputs.slack-message }}
 runs:
   using: composite
   steps:
-    - name: Resolve the latest release
-      id: release
+    # One step: the program of the v2 container image does all of it (scope, skip, image, scan, report, promote), see image-scan/run.sh
+    - name: Run the image-scan weekly
+      id: run
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: |
-        tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-        echo "Latest release: ${tag}"
-        echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-
-    # An infrastructure failure fails the job BEFORE any issue is touched: a partial scan must never close issues.
-    - name: Scan the released images
-      shell: bash
-      env:
-        IMAGE_REPOSITORY: ${{ inputs.image-repository }}
-        ARCHITECTURES: ${{ inputs.architectures }}
-        TAG: ${{ steps.release.outputs.tag }}
+        IMAGE_SCAN_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
+        IMAGE_SCAN_ARCHITECTURES: ${{ inputs.architectures }}
         IMAGE_SCAN_DOCKERHUB_USER: ${{ inputs.dockerhub-user }}
         IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ inputs.dockerhub-password }}
         IMAGE_SCAN_REGISTRY_USER: ${{ inputs.registry-user }}
@@ -73,25 +63,5 @@ runs:
         IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
         IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
         IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
-      run: ${{ github.action_path }}/scan.sh "$IMAGE_REPOSITORY" "$TAG" "$ARCHITECTURES" "${RUNNER_TEMP}/findings.json"
-
-    - name: Sync the issues
-      id: issues
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        TAG: ${{ steps.release.outputs.tag }}
-      run: |
-        message_file="${RUNNER_TEMP}/slack-message.txt"
-        rm -f "$message_file"
-        rc=0
-        SLACK_MESSAGE_FILE="$message_file" ${{ github.action_path }}/issues.sh "$TAG" "${RUNNER_TEMP}/findings.json" || rc=$?
-
-        # Written even when the sync failed halfway, issues already opened must still be announced
-        delimiter="EOF_$(openssl rand -hex 8)"
-        {
-          echo "slack-message<<${delimiter}"
-          if [[ -s "$message_file" ]]; then cat "$message_file"; fi
-          echo "${delimiter}"
-        } >> "$GITHUB_OUTPUT"
-        exit "$rc"
+        IMAGE_SCAN_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: ${{ github.action_path }}/../run.sh weekly
