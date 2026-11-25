@@ -146,14 +146,21 @@ A repo publishing crates with crates.io Trusted Publishing adds `id-token: write
 
 ## image-scan
 
-Scans container images for critical/high vulnerabilities. The scanner is an implementation detail (Docker Scout today, run from the pinned `docker/scout-cli` image in `image-scan/lib/scanner.sh`), names and inputs are scanner-agnostic so a switch to Trivy or Grype renames nothing.
+Scans container images for critical/high vulnerabilities. The scanner is an implementation detail (Docker Scout today, shipped in the `ghcr.io/streamingfast/image-scan` container image next to the Go program that runs it, see `image-scan/Dockerfile`), names and inputs are scanner-agnostic so a switch to Trivy or Grype renames nothing.
+
+> **v1 → v2.** `image-scan/gate` and `image-scan/weekly` were bash scripts up to `v1.4.3` and are a Go program in a container image from `v2.0.0`. Inputs, outputs, exit codes (0 clean, 2 findings, 10 infrastructure failure), report, comment and issue behaviour are the same: change `@v1` to `@v2`, nothing else. `sfreleaser/*` is unchanged, and `image-scan/*@v1` keeps working as it did, see [Tagging](#tagging). What differs:
+>
+> - the action pulls the image (3 attempts, linear backoff) instead of `docker/scout-cli`, and runs it with `docker run`: a runner without Docker (or not Linux) cannot run it, `date -d` and `jq` are not needed anymore;
+> - `promote-tags` retags registry-side with the Docker config of the runner (`docker/login-action`), mounted read-only into the container: logins stored by `docker login` (GitHub Container Registry, Artifact Registry/`gcr.io` with an access token) work, a Docker credential helper (`gcloud auth configure-docker`) does not;
+> - `retries` is validated at start, an invalid value fails the action even when `scan-paths` skips the scan;
+> - `scan-paths` regular expressions are Go (RE2) regular expressions, the same as POSIX extended ones apart from the exotic constructs, and match file names as they are (v1 matched the quoted names of `git diff` for non-ASCII names).
 
 | Action | Purpose |
 |---|---|
 | `image-scan/gate` | CI gate: fails on findings (unless advisory), names the CVEs, honors VEX risk acceptances, writes the report to the job summary and, on a pull request, a quiet comment (nothing when clean) |
 | `image-scan/weekly` | Scans the latest release and keeps one GitHub issue per CVE |
 
-Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-password`) and run on a `ubuntu-*` runner (`date -d` is GNU only, `image-scan/weekly/issues.sh` falls back to BSD `date -v`).
+Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-password`) and run on a `ubuntu-*` runner (Linux with Docker, the image is `linux/amd64` and `linux/arm64`).
 
 ### `image-scan/gate`
 
@@ -207,7 +214,7 @@ In the `docker.yml` of the repository, after `Build and push Docker image`, with
       # The image is always built, only the scan is skipped on pull requests that cannot change its contents.
       - name: Scan the image
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
-        uses: streamingfast/actions/image-scan/gate@v1
+        uses: streamingfast/actions/image-scan/gate@v2
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -271,7 +278,7 @@ When `scan-paths` skips the scan (only on a pull request) the tags are promoted 
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.sha.outputs.tags }}
 
-      - uses: streamingfast/actions/image-scan/gate@v1
+      - uses: streamingfast/actions/image-scan/gate@v2
         with:
           image: ${{ steps.sha.outputs.tags }}
           promote-tags: ${{ steps.meta.outputs.tags }}
@@ -321,7 +328,7 @@ Example, `.github/vex/firehose-stellar.openvex.json`, for the Go standard librar
 ```yaml
       - uses: actions/checkout@v7 # the documents are read from the workspace
       # ... build and push the image ...
-      - uses: streamingfast/actions/image-scan/gate@v1
+      - uses: streamingfast/actions/image-scan/gate@v2
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -370,7 +377,7 @@ A scan that cannot run (login, pull, database fetch, after the retries) still fa
 
 ```yaml
       - id: scan
-        uses: streamingfast/actions/image-scan/gate@v1
+        uses: streamingfast/actions/image-scan/gate@v2
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -412,7 +419,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ... build and push the image ...
-      - uses: streamingfast/actions/image-scan/gate@v1
+      - uses: streamingfast/actions/image-scan/gate@v2
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -460,7 +467,7 @@ jobs:
     steps:
       - name: Scan the latest release
         id: scan
-        uses: streamingfast/actions/image-scan/weekly@v1
+        uses: streamingfast/actions/image-scan/weekly@v2
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -482,12 +489,23 @@ jobs:
           args: ":x: *${{ github.repository }}* Weekly image scan failed (<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|See Actions Logs>) :broken_heart:"
 ```
 
-The scripts are tested with a fake `docker` and `gh`: `image-scan/tests/run.sh`.
+The Go program is tested with fakes for the scanner, GitHub and the registry (`cd image-scan && go test ./...`), the layout, the image and its release are described in [`image-scan/RELEASING.md`](image-scan/RELEASING.md).
+
+The image contains the [Docker Scout CLI](https://github.com/docker/scout-cli), released under the [Docker Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/), as published by Docker (`docker/scout-cli`, pinned by digest).
 
 ## Tagging
 
-Consumers pin to `@v1`, a moving tag updated on every backward-compatible change:
+The tags of this repository cover **all** the actions, two release lines coexist:
+
+| Line | Branch | Tags | Content |
+|---|---|---|---|
+| v2 | `main` | `v2.x.y`, moving `v2` | `image-scan/*` in Go and a container image, `sfreleaser/*` |
+| v1 | `release/v1` | `v1.x.y`, moving `v1` | `image-scan/*` in bash (frozen), `sfreleaser/*` |
+
+`v1` stays where it is and keeps receiving `sfreleaser/*` fixes as `v1.x.y` from `release/v1`; a fix of `sfreleaser/*` is made on `main` and cherry-picked to `release/v1` when v1 callers need it. Consumers pin to the moving tag of their line, updated on every backward-compatible change:
 
 ```bash
-git tag -f v1 && git push origin v1 --force
+git tag -f v2 && git push origin v2 --force
 ```
+
+The `image-scan` container image is released with `v2.x.y` tags, see [`image-scan/RELEASING.md`](image-scan/RELEASING.md).

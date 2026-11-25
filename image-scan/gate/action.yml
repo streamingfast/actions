@@ -44,11 +44,11 @@ inputs:
   promote-tags:
     description: |
       Newline or comma separated full image refs (like the tags output of docker/metadata-action) added to the image once it is
-      scanned clean, with docker buildx imagetools create: a registry-side retag of the scanned digest, no rebuild, the multi-arch
+      scanned clean, with a registry-side retag of the scanned digest (like docker buildx imagetools create), no rebuild, the multi-arch
       index and attestations are kept. Nothing is added when the scan finds vulnerabilities or cannot run. The tag equal to the image
       is skipped. Pushing only an immutable tag (like the commit sha) in the build, and the release tags here, makes the gate block
-      the release. The runner must already be logged in to the registry of the image and of the tags (as the build requires), the
-      credentials are not passed to the scanner. Applies when scan-paths skips the scan too (a pull request)
+      the release. The runner must already be logged in to the registry of the image and of the tags (as the build requires, docker/login-action), the
+      Docker config of the runner is mounted read-only into the action and the credentials are not passed to the scanner. Applies when scan-paths skips the scan too (a pull request)
     required: false
     default: ""
   skip-reason:
@@ -65,7 +65,7 @@ inputs:
       File or directory (relative to the workspace, so the caller must check out the repository) of OpenVEX documents, like .github/vex/,
       a per-CVE risk acceptance. A statement with status not_affected suppresses its CVE: it no longer fails the scan, and is listed under
       "Suppressed by VEX" with its justification in the log, the job summary and the pull request comment. Other statuses (including
-      under_investigation) suppress nothing. Mounted read-only into the scanner. Every statement must link a risk-accepted issue
+      under_investigation) suppress nothing. Read from the workspace, which the action mounts read-only. Every statement must link a risk-accepted issue
       and be removed when the fix ships. Empty applies no document
     required: false
     default: ""
@@ -87,105 +87,38 @@ inputs:
 outputs:
   scanned:
     description: '"true" when the scan was needed and started, "false" when scan-paths or skip-reason skipped it, a failed scan fails the action anyway'
-    value: ${{ steps.scope.outputs.scan == 'true' && steps.skip.outputs.skip != 'true' }}
+    value: ${{ steps.run.outputs.scanned }}
   findings:
     description: '"true" when the scan found vulnerabilities (not counting those suppressed by vex-location), which only reaches the caller with enforce: false (the action fails otherwise), "false" otherwise, also when the scan did not run'
-    value: ${{ steps.scan.outputs.findings || 'false' }}
+    value: ${{ steps.run.outputs.findings || 'false' }}
   skipped:
     description: '"true" when skip-reason bypassed the scan (workflow_dispatch only), "false" otherwise'
-    value: ${{ steps.skip.outputs.skip }}
+    value: ${{ steps.run.outputs.skipped }}
   promoted:
     description: Newline separated tags added to the image by promote-tags, empty when none was
-    value: ${{ steps.promote.outputs.promoted }}
+    value: ${{ steps.run.outputs.promoted }}
 runs:
   using: composite
   steps:
-    - name: Check if the scan is needed
-      id: scope
+    # One step: the program of the v2 container image does all of it (scope, skip, image, scan, report, promote), see image-scan/run.sh
+    - name: Run the image-scan gate
+      id: run
       shell: bash
       env:
-        SCAN_PATHS: ${{ inputs.scan-paths }}
-      run: ${{ github.action_path }}/scope.sh
-
-    - name: Check if the scan is skipped on purpose
-      id: skip
-      shell: bash
-      env:
-        SKIP_REASON: ${{ inputs.skip-reason }}
-      run: ${{ github.action_path }}/skip.sh decide
-
-    - name: Resolve the image
-      id: image
-      shell: bash
-      env:
-        IMAGE: ${{ inputs.image }}
-        IMAGE_REPOSITORY: ${{ inputs.image-repository }}
-      run: ${{ github.action_path }}/image.sh
-
-    - name: Resolve the digest of the image to promote
-      id: digest
-      if: ${{ inputs.promote-tags != '' || steps.skip.outputs.skip == 'true' }}
-      # Without promote-tags the digest only completes the audit of a skipped scan, it must not block the emergency release
-      continue-on-error: ${{ inputs.promote-tags == '' }}
-      shell: bash
-      env:
-        IMAGE: ${{ steps.image.outputs.image }}
-        IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
-      run: ${{ github.action_path }}/promote.sh resolve
-
-    - name: Record the skipped scan
-      if: steps.skip.outputs.skip == 'true'
-      shell: bash
-      env:
-        IMAGE: ${{ steps.image.outputs.image }}
-        DIGEST: ${{ steps.digest.outputs.digest }}
-        SKIP_REASON: ${{ inputs.skip-reason }}
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: ${{ github.action_path }}/skip.sh record
-
-    - name: Scan the image
-      id: scan
-      if: steps.scope.outputs.scan == 'true' && steps.skip.outputs.skip != 'true'
-      shell: bash
-      env:
-        IMAGE: ${{ steps.image.outputs.image }}
+        IMAGE_SCAN_IMAGE: ${{ inputs.image }}
+        IMAGE_SCAN_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
         IMAGE_SCAN_DOCKERHUB_USER: ${{ inputs.dockerhub-user }}
         IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ inputs.dockerhub-password }}
         IMAGE_SCAN_REGISTRY_USER: ${{ inputs.registry-user }}
         IMAGE_SCAN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
         IMAGE_SCAN_SEVERITIES: ${{ inputs.severities }}
         IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+        IMAGE_SCAN_SCAN_PATHS: ${{ inputs.scan-paths }}
+        IMAGE_SCAN_GITHUB_TOKEN: ${{ inputs.github-token }}
+        IMAGE_SCAN_PROMOTE_TAGS: ${{ inputs.promote-tags }}
+        IMAGE_SCAN_SKIP_REASON: ${{ inputs.skip-reason }}
         IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
         IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
         IMAGE_SCAN_ENFORCE: ${{ inputs.enforce }}
-      run: |
-        report="$(mktemp "${RUNNER_TEMP}/image-scan-XXXXXX.md")"
-        comment="${report%.md}-comment.md"
-        echo "report=${report}" >> "$GITHUB_OUTPUT"
-        echo "comment=${comment}" >> "$GITHUB_OUTPUT"
-        ${{ github.action_path }}/scan.sh "$IMAGE" "$report" "$comment"
-
-    - name: Publish the scan report
-      if: ${{ !cancelled() && (steps.scan.outcome == 'success' || steps.scan.outcome == 'failure') }}
-      continue-on-error: true
-      shell: bash
-      env:
-        IMAGE: ${{ steps.image.outputs.image }}
-        REPORT: ${{ steps.scan.outputs.report }}
-        COMMENT: ${{ steps.scan.outputs.comment }}
-        FINDINGS: ${{ steps.scan.outputs.findings }}
-        GH_TOKEN: ${{ inputs.github-token }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT" "$COMMENT"
-
-    # After the report, a clean scan (or no scan: scan-paths or skip-reason skipped it) is the only way to get here, a failed step stops the action
-    - name: Promote the tags
-      id: promote
-      if: ${{ inputs.promote-tags != '' && (steps.scan.outcome == 'success' || steps.scope.outputs.scan == 'false' || steps.skip.outputs.skip == 'true') }}
-      shell: bash
-      env:
-        IMAGE: ${{ steps.image.outputs.image }}
-        EXPECTED_DIGEST: ${{ steps.digest.outputs.digest }}
-        PROMOTE_TAGS: ${{ inputs.promote-tags }}
-        IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
-      run: ${{ github.action_path }}/promote.sh promote
+        IMAGE_SCAN_PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: ${{ github.action_path }}/../run.sh gate

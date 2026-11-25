@@ -1,0 +1,120 @@
+name: image-scan image
+
+# Builds the ghcr.io/streamingfast/image-scan container image (linux/amd64 + linux/arm64), scans it with the gate it ships, and
+# on a v2 tag adds the version tags to the image whose digest image-scan/run.sh pins. See image-scan/RELEASING.md.
+on:
+  pull_request:
+    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml"]
+  push:
+    branches: [main]
+    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml"]
+    tags: ["v2.*.*"]
+
+env:
+  IMAGE: ghcr.io/streamingfast/image-scan
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: image-scan/go.mod
+      - run: go vet ./... && go test ./...
+        working-directory: image-scan
+
+  # Every push to main (and pull request, without pushing) builds the image tagged by its commit, the digest to pin
+  build:
+    if: github.ref_type != 'tag'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: image-scan
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          build-args: VERSION=sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+      - name: Digest to pin in image-scan/run.sh
+        if: github.event_name != 'pull_request'
+        run: echo "${IMAGE}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+
+      # The image scans itself with the program it contains (IMAGE_SCAN_RUNNER_IMAGE), through the same shim as the action
+      - name: Scan the image
+        if: github.event_name != 'pull_request'
+        run: image-scan/run.sh gate
+        env:
+          IMAGE_SCAN_RUNNER_IMAGE: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          IMAGE_SCAN_IMAGE: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          IMAGE_SCAN_DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          IMAGE_SCAN_REGISTRY_USER: ${{ github.actor }}
+          IMAGE_SCAN_REGISTRY_PASSWORD: ${{ github.token }}
+          IMAGE_SCAN_GITHUB_TOKEN: ${{ github.token }}
+
+  # A v2.x.y tag adds its version tags to the image pinned by image-scan/run.sh, no rebuild: what is released is what was scanned
+  release:
+    if: github.ref_type == 'tag'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Check the pinned image
+        id: pin
+        run: |
+          pinned="$(grep -oE 'ghcr.io/streamingfast/image-scan@sha256:[0-9a-f]{64}' image-scan/run.sh | head -n1)"
+          [[ -n "${pinned}" && "${pinned}" != *@sha256:0000000000000000000000000000000000000000000000000000000000000000 ]] || { echo "::error::image-scan/run.sh does not pin a built image"; exit 1; }
+          revision="$(docker buildx imagetools inspect "${pinned}" --format '{{json .Image}}' | jq -r '.. | .config?.Labels?["org.opencontainers.image.revision"]? // empty' | head -n1)"
+          [[ -n "${revision}" ]] || { echo "::error::${pinned} has no revision label"; exit 1; }
+          # the program of the image must be the one of this tag
+          if ! git diff --quiet "${revision}" HEAD -- image-scan/Dockerfile image-scan/go.mod image-scan/go.sum image-scan/cmd image-scan/internal; then
+            echo "::error::The pinned image was built from ${revision}, the code of the image changed since, build and pin again"
+            exit 1
+          fi
+          echo "image=${pinned}" >> "$GITHUB_OUTPUT"
+      - name: Tag the image
+        run: |
+          version="${GITHUB_REF_NAME}"
+          # an immutable version tag is never overwritten
+          if docker buildx imagetools inspect "${IMAGE}:${version}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${version} exists already"; exit 1
+          fi
+          major="${version%%.*}"
+          docker buildx imagetools create --tag "${IMAGE}:${version}" --tag "${IMAGE}:${major}" "${{ steps.pin.outputs.image }}"
