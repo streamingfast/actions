@@ -1,0 +1,69 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/streamingfast/sf-analytics/.github/vex/dashboard.openvex.json",
+  "author": "StreamingFast Platform <platform@streamingfast.io>",
+  "timestamp": "2026-11-24T12:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107493"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard?repository_url=gcr.io"
+        },
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard"
+        },
+        {
+          "@id": "pkg:docker/eoscanada-shared-services/sf-analytics-dashboard"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted, see https://github.com/streamingfast/sf-analytics/issues/207. openssl in Debian 13 (distroless base) has no fix yet. The Debian libssl3 is never loaded: the node binary statically bundles its own OpenSSL and has no libssl/libcrypto dependency. PEM_X509_INFO_read_bio_ex use-after-free needs an application passing a pre-filled stack; the Next.js server never calls it. Re-check by 2026-12-24, remove when Debian ships the fixed openssl",
+      "timestamp": "2026-11-24T12:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84786"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard?repository_url=gcr.io"
+        },
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard"
+        },
+        {
+          "@id": "pkg:docker/eoscanada-shared-services/sf-analytics-dashboard"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted, see https://github.com/streamingfast/sf-analytics/issues/208. openssl in Debian 13 (distroless base) has no fix yet. The Debian libssl3 is never loaded: the node binary statically bundles its own OpenSSL and has no libssl/libcrypto dependency. DANE client crash needs DANE enabled; Node's tls has no DANE support. Re-check by 2026-12-24, remove when Debian ships the fixed openssl",
+      "timestamp": "2026-11-24T12:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107496"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard?repository_url=gcr.io"
+        },
+        {
+          "@id": "pkg:oci/eoscanada-shared-services/sf-analytics-dashboard"
+        },
+        {
+          "@id": "pkg:docker/eoscanada-shared-services/sf-analytics-dashboard"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted, see https://github.com/streamingfast/sf-analytics/issues/209. openssl in Debian 13 (distroless base) has no fix yet. The Debian libssl3 is never loaded: the node binary statically bundles its own OpenSSL and has no libssl/libcrypto dependency. CMS_encrypt infinite loop needs CMS encryption to an attacker-supplied certificate; Node and Next.js never do CMS. Re-check by 2026-12-24, remove when Debian ships the fixed openssl",
+      "timestamp": "2026-11-24T12:00:00Z"
+    }
+  ]
+}

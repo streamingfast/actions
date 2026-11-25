@@ -405,9 +405,68 @@ for ts in 2026-01-01T00:00:00Z 2026-03-01T00:00:00Z 2026-02-01T00:00:00Z; do
   printf '{"statements": [{"vulnerability": {"name": "CVE-2025-2222"}, "status": "not_affected", "justification": "j-%s", "timestamp": "%s"}]}' "${ts}" "${ts}" >"${FAKE_DIR}/two/${ts}.json"
 done
 two="$(suppressed_findings "${rows}" '[]' "$(vex_statements "${FAKE_DIR}/two")")"
-check "report: the most recent statement wins" test "$(jq -r '.[] | select(.id == "CVE-2025-2222") | .justification' <<<"${two}")" = "j-2026-03-01T00:00:00Z"
+check "report: the most recent statement wins" test "$(jq -r '.[] | select(.id == "CVE-2025-2222") | .statements | map(.justification) | join(",")' <<<"${two}")" = "j-2026-03-01T00:00:00Z"
 check "report: a CVE without statement is suppressed without justification" test "$(jq -r '.[] | select(.id == "CVE-2025-1111") | .status' <<<"${two}")" = ""
 check "report: only CVEs missing from the active list are suppressed" test "$(suppressed_findings "${rows}" "${rows}" '[]')" = "[]"
+
+# Statements scoped to the image: the sf-analytics case, two documents (real files of streamingfast/sf-analytics) with the same
+# CVEs and different products, the report must show the statements of the scanned image
+sfa="${fx}/vex-sf-analytics"
+sfa_statements="$(vex_statements "${sfa}")"
+check "report scope: products of the statements are read (objects and strings)" test "$(jq -r '[.[].products | length] | min' <<<"${sfa_statements}")" -eq 3
+sfa_rows='[{"id":"CVE-2026-107493","severity":"high","package":"openssl","installed":"3.0","fixed":""},{"id":"CVE-2026-107496","severity":"high","package":"openssl","installed":"3.0","fixed":""},{"id":"CVE-2026-84786","severity":"critical","package":"node","installed":"22","fixed":""}]'
+dash_img="gcr.io/eoscanada-shared-services/sf-analytics-dashboard@sha256:9ea5d73e$(printf 'a%.0s' {1..56})"
+dash="$(suppressed_findings "${sfa_rows}" '[]' "${sfa_statements}" "${dash_img}")"
+check "report scope: the dashboard image gets one statement per CVE" test "$(jq -c 'map(.statements | length)' <<<"${dash}")" = "[1,1,1]"
+check "report scope: ... from dashboard.openvex.json" test "$(jq -r 'map(.statements[0].file) | unique | join(",")' <<<"${dash}")" = dashboard.openvex.json
+check "report scope: ... scoped" test "$(jq -r 'map(.statements[0].scoped) | all' <<<"${dash}")" = true
+check "report scope: ... with the dashboard justification, not the dbt-runner one" test "$(jq -r '[.[].statements[0].impact] | join(" ")' <<<"${dash}" | grep -ci 'dbt\|python')" -eq 0
+dbt="$(suppressed_findings "${sfa_rows}" '[]' "${sfa_statements}" "gcr.io/eoscanada-shared-services/dbt-runner:latest")"
+check "report scope: the dbt-runner image gets the dbt-runner statements" test "$(jq -r 'map(.statements[0].file) | unique | join(",")' <<<"${dbt}")" = dbt-runner.openvex.json
+check "report scope: ... and they differ from the dashboard ones" test "$(jq -r '.[0].statements[0].impact' <<<"${dbt}")" != "$(jq -r '.[0].statements[0].impact' <<<"${dash}")"
+text="$(suppressed_text "${dash}")"
+check "report scope: the log line names the VEX file" grep -q '\[dashboard.openvex.json\]$' <<<"$(grep '^CVE-2026-107493' <<<"${text}")"
+check "report scope: ... and no not-scoped mention" test "$(grep -c 'not scoped' <<<"${text}")" -eq 0
+md="$(suppressed_markdown "${dash}")"
+check "report scope: the markdown shows the file" grep -q 'dashboard.openvex.json' <<<"${md}"
+check "report scope: ... not the other one" test "$(grep -c 'dbt-runner.openvex.json' <<<"${md}")" -eq 0
+
+unscoped="$(suppressed_findings "${sfa_rows}" '[]' "${sfa_statements}" "gcr.io/eoscanada-shared-services/other-image:1")"
+check "report scope: no product match falls back to the CVE id, marked" test "$(jq -r 'map(.statements | length == 1 and .[0].scoped == false) | all' <<<"${unscoped}")" = true
+check "report scope: ... in the log" test "$(suppressed_text "${unscoped}" | grep -c '(statement not scoped to this image)$')" -eq 3
+check "report scope: ... in the markdown" grep -q 'statement not scoped to this image' <<<"$(suppressed_markdown "${unscoped}")"
+
+mkdir "${FAKE_DIR}/both"
+for n in a b; do
+  printf '{"author": "x", "statements": [{"vulnerability": {"name": "CVE-2025-2222"}, "products": [{"@id": "pkg:oci/o/r?repository_url=ghcr.io"}], "status": "not_affected", "justification": "j-%s"}]}' "${n}" >"${FAKE_DIR}/both/${n}.json"
+done
+both="$(suppressed_findings "${rows}" '[]' "$(vex_statements "${FAKE_DIR}/both")" ghcr.io/o/r:abc)"
+check "report scope: several matching statements are all shown" test "$(jq -r '.[] | select(.id == "CVE-2025-2222") | .statements | map(.file) | join(",")' <<<"${both}")" = "a.json,b.json"
+check "report scope: ... on one log line" test "$(suppressed_text "${both}" | grep '^CVE-2025-2222' | grep -c ' | ')" -eq 1
+
+# Product forms: each must match the image, and only it
+product_match() { # product_match <product> <image> -> true|false
+  jq -nr --arg p "$1" --arg i "$2" "${VEX_JQ_DEFS}"'($i | image_ref) as $img | $p | product_matches($img)'
+}
+gcr=gcr.io/eoscanada-shared-services/img
+for p in "pkg:oci/eoscanada-shared-services/img?repository_url=gcr.io" \
+  "pkg:oci/eoscanada-shared-services/img@sha256:${dgst:=$(printf 'b%.0s' {1..64})}?repository_url=gcr.io&tag=v1" \
+  "pkg:oci/eoscanada-shared-services/img@sha256%3A${dgst}?repository_url=gcr.io&tag=v1" \
+  "pkg:oci/eoscanada-shared-services/img" "pkg:oci/img?repository_url=gcr.io%2Feoscanada-shared-services%2Fimg" \
+  "pkg:docker/gcr.io/eoscanada-shared-services/img" "pkg:docker/eoscanada-shared-services/img" "eoscanada-shared-services/img" "${gcr}" "${gcr}:v1"; do
+  check "product forms: ${p:0:70} matches ${gcr}@sha256:b…" test "$(product_match "${p}" "${gcr}@sha256:${dgst}")" = true
+done
+check "product forms: a tag only image matches" test "$(product_match "pkg:oci/eoscanada-shared-services/img?repository_url=gcr.io" "${gcr}:v2")" = true
+check "product forms: another registry does not match" test "$(product_match "pkg:oci/eoscanada-shared-services/img?repository_url=ghcr.io" "${gcr}:v2")" = false
+check "product forms: another repository does not match" test "$(product_match "pkg:oci/eoscanada-shared-services/img2?repository_url=gcr.io" "${gcr}:v2")" = false
+check "product forms: a prefix of the repository does not match" test "$(product_match "pkg:docker/eoscanada-shared-services" "${gcr}:v2")" = false
+check "product forms: another digest does not match" test "$(product_match "pkg:oci/eoscanada-shared-services/img@sha256:$(printf 'c%.0s' {1..64})?repository_url=gcr.io" "${gcr}@sha256:${dgst}")" = false
+check "product forms: ghcr.io purl" test "$(product_match "pkg:oci/streamingfast/foo?repository_url=ghcr.io" "ghcr.io/streamingfast/foo:v1.2.3")" = true
+check "product forms: docker hub image by short name" test "$(product_match "pkg:docker/streamingfast/foo" "streamingfast/foo:v1")" = true
+check "product forms: ... and by docker.io name" test "$(product_match "pkg:docker/docker.io/streamingfast/foo" "streamingfast/foo:v1")" = true
+check "product forms: ... not on ghcr.io" test "$(product_match "pkg:docker/docker.io/streamingfast/foo" "ghcr.io/streamingfast/foo:v1")" = false
+check "product forms: a registry with a port" test "$(product_match "localhost:5000/foo" "localhost:5000/foo:1")" = true
+check "product forms: garbage does not fail" test "$(product_match "" "${gcr}:1")" = false
 
 # ---------------------------------------------------------------- gate/scan.sh
 img=ghcr.io/o/r:abc-amd64
@@ -473,6 +532,21 @@ echo 9 >"${FAKE_DIR}/login-fails"
 gate_scan IMAGE_SCAN_ENFORCE=false
 check "gate scan advisory: an infrastructure failure still fails (10)" test $? -eq 10
 check "gate scan advisory: ... no findings output" not_logged "findings" output
+
+# VEX scoped to the image, end to end (sf-analytics): the image of the dashboard, the two real documents
+sfa_img="gcr.io/eoscanada-shared-services/sf-analytics-dashboard@sha256:9ea5d73e$(printf 'a%.0s' {1..56})"
+sfa_key="${sfa_img//[\/:]/_}"
+setup
+echo 2 >"${FAKE_DIR}/${sfa_key}.rc"
+echo 0 >"${FAKE_DIR}/${sfa_key}.vex.rc"
+jq -nc '{version: "2.1.0", runs: [{tool: {driver: {rules: [("CVE-2026-107493", "CVE-2026-107496", "CVE-2026-84786") | {id: ., properties: {cvssV3_severity: "HIGH"}}]}}}]}' >"${FAKE_DIR}/${sfa_key}.sarif"
+env IMAGE_SCAN_RETRIES=1 IMAGE_SCAN_VEX_LOCATION="${fx}/vex-sf-analytics" "${root}/gate/scan.sh" "${sfa_img}" "${FAKE_DIR}/report.md" >"${FAKE_DIR}/out.txt" 2>&1
+check "gate scan vex scope: both documents, all suppressed, passes" test $? -eq 0
+check "gate scan vex scope: the log names the dashboard document" grep -q "^CVE-2026-107493 .*\[dashboard.openvex.json\]$" "${FAKE_DIR}/out.txt"
+check "gate scan vex scope: ... never the dbt-runner one" not_logged "dbt-runner.openvex.json" out.txt
+check "gate scan vex scope: the report names the dashboard document" report_has "dashboard.openvex.json"
+check "gate scan vex scope: ... never the dbt-runner one" not report_has "dbt-runner.openvex.json"
+check "gate scan vex scope: ... no not-scoped mention" not report_has "not scoped"
 
 # VEX: everything suppressed
 setup
@@ -612,7 +686,7 @@ IMAGE_SCAN_VEX_LOCATION="${FAKE_DIR}/vex" "${root}/weekly/scan.sh" "${repo}" v1.
 check "weekly scan vex: everything suppressed exits 0" test $? -eq 0
 check "weekly scan vex: ... no finding, so no issue" test "$(jq length "${FAKE_DIR}/findings.json")" -eq 0
 check "weekly scan vex: the documents are mounted in the scan" logged "-v ${FAKE_DIR}/vex:/vex:ro" docker.log
-check "weekly scan vex: the summary lists what was suppressed" grep -q "^- CVE-2025-0001 (critical) unknown unknown: component_not_present - risk-accepted #12 \[ghcr.io/o/r:v1.2.3-amd64\]$" "${GITHUB_STEP_SUMMARY}"
+check "weekly scan vex: the summary lists what was suppressed" grep -q "^- CVE-2025-0001 (critical) unknown unknown: component_not_present - risk-accepted #12 \[doc.json\] (statement not scoped to this image) \[ghcr.io/o/r:v1.2.3-amd64\]$" "${GITHUB_STEP_SUMMARY}"
 check "weekly scan vex: ... and says no issue is opened" grep -q "no issue opened" "${GITHUB_STEP_SUMMARY}"
 
 setup

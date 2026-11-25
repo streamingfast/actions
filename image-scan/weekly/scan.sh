@@ -48,7 +48,7 @@ for arch in ${architectures}; do
     if [[ "${all_rc}" -eq 0 || "${all_rc}" -eq 2 ]]; then
       active='[]'
       if [[ "${rc}" -eq 2 ]]; then active="$(sarif_findings "${report}")"; fi
-      arch_suppressed="$(suppressed_findings "$(sarif_findings "${all_report}")" "${active}" "$(vex_statements "${vex_location}")")"
+      arch_suppressed="$(suppressed_findings "$(sarif_findings "${all_report}")" "${active}" "$(vex_statements "${vex_location}")" "${image}")"
       suppressed="$(jq -nc --argjson a "${suppressed}" --argjson b "${arch_suppressed}" --arg image "${image}" '$a + ($b | map(. + {image: $image}))')"
     else
       echo "::warning::Cannot list the CVEs suppressed by the VEX documents on ${image} (scanner exit ${all_rc})"
@@ -98,7 +98,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
       echo
       echo "Suppressed by the VEX documents of \`${vex_location}\`, no issue opened:"
       echo
-      jq -r 'group_by(.id) | .[] | "- \(.[0].id) (\(.[0].severity)) \(.[0].package) \(.[0].installed)\(if .[0].status == "" then "" else ": " + (.[0].justification | if . == "" then "no justification" else . end) + (if .[0].impact == "" then "" else " - " + .[0].impact end) end) [\(map(.image) | join(", "))]"' <<<"${suppressed}"
+      jq -r "${VEX_JQ_DEFS}"'group_by(.id) | .[] | "- \(.[0].id) (\(.[0].severity)) \(.[0].package) \(.[0].installed)\(if .[0].status == "" then "" else ": " + (.[0] | suppressed_explanation) end) [\(map(.image) | join(", "))]"' <<<"${suppressed}"
     fi
   } >>"${GITHUB_STEP_SUMMARY}"
 fi

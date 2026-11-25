@@ -305,7 +305,10 @@ Example, `.github/vex/firehose-stellar.openvex.json`, for the Go standard librar
   "statements": [
     {
       "vulnerability": {"name": "CVE-2026-97054"},
-      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "products": [
+        {"@id": "pkg:oci/streamingfast/firehose-stellar?repository_url=ghcr.io"},
+        {"@id": "pkg:oci/streamingfast/firehose-stellar"}
+      ],
       "status": "not_affected",
       "justification": "inline_mitigations_already_exist",
       "impact_statement": "Risk accepted, see https://github.com/streamingfast/firehose-stellar/issues/57. Fixed in Go 1.27.4, remove when firecore is rebuilt with it",
@@ -330,7 +333,27 @@ Rules of the exceptions (SDLC policy):
 - every statement links its `risk-accepted` issue in `impact_statement` (the issue holds the risk assessment and the approval) and the pull request adding it is the approval trail;
 - `justification` is one of the OpenVEX values (`component_not_present`, `vulnerable_code_not_present`, `vulnerable_code_not_in_execute_path`, `vulnerable_code_cannot_be_controlled_by_adversary`, `inline_mitigations_already_exist`), the statement must be true: pick the one that holds, and if none does the CVE is not an exception to hide but a bypass to record with `skip-reason`;
 - remove the statement (and close the issue) in the pull request that ships the fix. The gate notices the statement matching no finding any more, but only a person removes it;
-- `products` must match the image: the example uses the purl of the repository without a version, so it holds for every tag and digest. The OpenVEX document is not validated against the image by the gate, check the first run: the CVE must be listed under **Suppressed by VEX**, if it stays in **Vulnerabilities** the product or the author did not match.
+- `products` must match the image the way Scout names it, see [Product ids](#product-ids). The OpenVEX document is not validated against the image by the gate, check the first run: the CVE must be listed under **Suppressed by VEX**, if it stays in **Vulnerabilities** the product or the author did not match.
+
+##### Product ids
+
+Scout names a scanned image with an OCI purl, `pkg:oci/<repository>?repository_url=<registry>`, its SBOM adds the `@sha256:<digest>` and `tag` qualifiers (`docker scout sbom --format spdx <image>` prints it as the first package, for `ghcr.io/streamingfast/firehose-core:latest`: `pkg:oci/streamingfast/firehose-core@sha256:875c…?repository_url=ghcr.io&tag=latest`). A `pkg:docker/...` product loads but never matches such an image. List the purl of the repository without digest and tag, so the statement holds for every tag and digest:
+
+| Image | `products` |
+|---|---|
+| `ghcr.io/streamingfast/firehose-stellar` | `pkg:oci/streamingfast/firehose-stellar?repository_url=ghcr.io` and `pkg:oci/streamingfast/firehose-stellar` |
+| `gcr.io/my-project/my-image` | `pkg:oci/my-project/my-image?repository_url=gcr.io` and `pkg:oci/my-project/my-image` |
+
+The report matching a statement to the scanned image (not Scout, which decides what is suppressed) also reads `pkg:docker/<registry>/<repository>` and plain `<registry>/<repository>` names, with or without tag and digest, and a product without registry matches any registry. With several documents, each suppressed CVE lists the statements whose products match the image (all of them, with the file name), a statement matching only by CVE id is shown with `(statement not scoped to this image)`: it suppressed the CVE in Scout, but is not about this image, give each document its own products.
+
+###### VEX loaded but nothing suppressed?
+
+The log says `Loaded 1 VEX document` but the CVE stays under **Vulnerabilities**:
+
+1. the product does not match: use the `pkg:oci/...?repository_url=...` form above (a `pkg:docker/...` product is the usual cause), check the repository path and registry against `docker scout sbom --format spdx <image>`;
+2. the statement is not `not_affected`: Scout ignores the other statuses (the gate warns about them);
+3. the author is rejected: Scout only accepts `docker.com` authors by default, `vex-author` defaults to `.*` here, check it was not restricted;
+4. the CVE id differs from the one of the report (a GHSA or alias instead of the `CVE-` id).
 
 `image-scan/weekly` takes the same `vex-location` and `vex-author` inputs: a CVE suppressed by a statement is not reported, so it opens no issue, an issue open for it is closed (with the usual comment, which then reads as a fix) and the job summary lists the suppressed CVEs.
 

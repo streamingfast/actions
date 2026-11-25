@@ -78,7 +78,7 @@ suppressed='[]'
 if [[ -n "${vex_location}" ]]; then
   statements="$(vex_statements "${vex_location}")"
   if all="$(sarif_pass "${work}/all.sarif" no-vex)"; then
-    suppressed="$(suppressed_findings "${all}" "${active}" "${statements}")"
+    suppressed="$(suppressed_findings "${all}" "${active}" "${statements}" "${image}")"
     # A statement that cannot work must be seen, not trusted
     while IFS= read -r line; do
       [[ -n "${line}" ]] && echo "::warning::${line}"

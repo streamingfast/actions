@@ -7,7 +7,7 @@
   "statements": [
     {
       "vulnerability": {"name": "CVE-2026-97054"},
-      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "products": [{"@id": "pkg:oci/o/r?repository_url=ghcr.io"}],
       "status": "not_affected",
       "justification": "inline_mitigations_already_exist",
       "impact_statement": "Risk accepted in https://github.com/streamingfast/firehose-stellar/issues/57, fixed in Go 1.27.4, remove once firecore is rebuilt with it",
@@ -15,12 +15,12 @@
     },
     {
       "vulnerability": {"name": "CVE-2025-2222"},
-      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "products": [{"@id": "pkg:oci/o/r?repository_url=ghcr.io"}],
       "status": "under_investigation"
     },
     {
       "vulnerability": "CVE-2025-9999",
-      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "products": [{"@id": "pkg:oci/o/r?repository_url=ghcr.io"}],
       "status": "not_affected",
       "justification": "component_not_present"
     }
