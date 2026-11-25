@@ -1,10 +1,10 @@
 # Changelog
 
-## v2.0.0
+## v1.5.0
 
 ### Changed
 
-- Rewrite `image-scan/gate` and `image-scan/weekly` in Go and ship them as the `ghcr.io/streamingfast/image-scan` container image (the Go program and the pinned Docker Scout CLI, `linux/amd64` and `linux/arm64`), built and published by `.github/workflows/image-scan-image.yml`. Inputs, outputs, exit codes (0 clean, 2 findings never retried, 10 infrastructure failure after the retries), the pull request comment, the job summary, the skip audit issue, the weekly issues, the VEX suppression report and `promote-tags` by digest with the digest re-check behave as in `v1.4.3`: callers change `@v1` to `@v2`. The `v1` tags are unchanged and `release/v1` receives future `v1.x.y` fixes, see the README
+- Rewrite `image-scan/gate` and `image-scan/weekly` in Go and ship them as the `ghcr.io/streamingfast/image-scan` container image (the Go program and the pinned Docker Scout CLI, `linux/amd64` and `linux/arm64`), built and published by `.github/workflows/image-scan-image.yml`. Inputs, outputs, exit codes (0 clean, 2 findings never retried, 10 infrastructure failure after the retries), the pull request comment, the job summary, the skip audit issue, the weekly issues, the VEX suppression report and `promote-tags` by digest with the digest re-check behave as in `v1.4.3`: callers keep `@v1`
 - Run the actions with one `docker run` of a digest-pinned image (pulled with 3 attempts and a linear backoff) instead of a `docker/scout-cli` container started by bash scripts, which removes the Docker Hub login and pull of the scanner image from every attempt
 - Retag `promote-tags` registry-side with the Docker config of the runner (mounted read-only), logins stored by `docker login` work (`ghcr.io`, `gcr.io` with an access token), credential helpers do not
 - Fail an invalid `retries` at start, also when `scan-paths` skips the scan

@@ -28,15 +28,15 @@ What the shim passes to the container: `IMAGE_SCAN_*`, `GITHUB_*` and `RUNNER_*`
 
 1. Merge to `main`. The workflow builds the image from the commit (`ghcr.io/streamingfast/image-scan:sha-<commit>`, amd64 + arm64), writes its digest in the job summary, and scans it with the gate it contains.
 2. Commit the digest in `image-scan/run.sh` (the `image=` line). Nothing the image is built from changes, so the pin commit does not rebuild it.
-3. Add `## v2.x.y` to `CHANGELOG.md`, tag the pin commit `v2.x.y` and push the tag.
-4. The workflow checks that `run.sh` pins a built image whose revision label has the same `Dockerfile`, `go.*`, `cmd` and `internal` as the tag, then adds the tags `v2.x.y` and `v2` to the image by digest (no rebuild, an existing version tag is never overwritten).
-5. Move the `v2` git tag: `git tag -f v2 && git push origin v2 --force`.
+3. Add `## v1.x.y` to `CHANGELOG.md`, tag the pin commit `v1.x.y` and push the tag.
+4. The workflow checks that `run.sh` pins a built image whose revision label has the same `Dockerfile`, `go.*`, `cmd` and `internal` as the tag, then adds the tags `v1.x.y` and `v1` to the image by digest (no rebuild, an existing version tag is never overwritten).
+5. Move the `v1` git tag: `git tag -f v1 && git push origin v1 --force`. Every caller of `@v1` runs the new release from then on: try it from one repository with `@v1.x.y` before moving `v1`.
 
 Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKERHUB_USER` and `DOCKERHUB_PASSWORD` secrets for the self-scan, and the `ghcr.io/streamingfast/image-scan` package must be readable by the callers (public, or internal and shared with the organisation repositories).
 
-## v1 and v2
+## One release line
 
-The tags of the repository cover every action, so two lines coexist (see the README). `v1` and `v1.4.3` point to `4e18717` and are never moved. `release/v1` starts there for the `v1.x.y` fixes of `sfreleaser/*`, `main` is v2.
+The tags of the repository cover every action (`sfreleaser/*` too), and image-scan keeps the `v1` line: the Go rewrite has the same inputs, outputs and exit codes as the bash version, differences found after the release are fixed in `v1.x.y`. A `v1.x.y` tag that only changes `sfreleaser/*` also adds its tags to the pinned image, which must still have been built from the code of the tag.
 
 ## The Docker Scout CLI
 
