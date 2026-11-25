@@ -59,11 +59,18 @@ runs:
         CARGO_REGISTRY_TOKEN: ${{ inputs.cargo-registry-token }}
       run: sfreleaser release publish "$VERSION"
 
+    # Runs even when "Publish release" failed: the tag and release are created before the Homebrew
+    # formula pull request is merged, so a late failure there must not skip the build of the tag.
     - name: Start ${{ inputs.build-workflow }} on the tag
-      if: inputs.build-workflow != ''
+      if: ${{ !cancelled() && inputs.build-workflow != '' }}
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
         WORKFLOW: ${{ inputs.build-workflow }}
         GH_TOKEN: ${{ inputs.github-token }}
-      run: gh workflow run "$WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$VERSION"
+      run: |
+        if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" --silent 2>/dev/null; then
+          echo "Tag $VERSION does not exist, publish failed before creating it, not starting $WORKFLOW"
+          exit 0
+        fi
+        gh workflow run "$WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$VERSION"

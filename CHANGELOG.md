@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.2
+
+### Fixed
+
+- Fix `sfreleaser/publish` skipping `build-workflow` when `sfreleaser release publish` fails after the tag is created (like a Homebrew tap pull request merge failure), the build now still starts on an existing tag so the image is built and scanned
+
 ## v1.4.1
 
 ### Changed
