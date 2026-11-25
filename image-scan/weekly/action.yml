@@ -42,6 +42,10 @@ inputs:
     description: Token resolving the release and managing issues, needs the contents read and issues write permissions
     required: false
     default: ${{ github.token }}
+  pull-token:
+    description: Token pulling the image-scan container image (a private package of ghcr.io) with the user of the workflow actor, needs the packages read permission, and the package must grant the repository read access. Empty pulls without login
+    required: false
+    default: ${{ github.token }}
 outputs:
   slack-message:
     description: Multiline message listing the issues opened by this run, empty when none was opened
@@ -64,4 +68,5 @@ runs:
         IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
         IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
         IMAGE_SCAN_GITHUB_TOKEN: ${{ inputs.github-token }}
+        IMAGE_SCAN_PULL_TOKEN: ${{ inputs.pull-token }}
       run: ${{ github.action_path }}/../run.sh weekly

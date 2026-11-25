@@ -162,6 +162,13 @@ Scans container images for critical/high vulnerabilities. The scanner is an impl
 
 Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-password`) and run on a `ubuntu-*` runner (Linux with Docker, the image is `linux/amd64` and `linux/arm64`).
 
+### Access to the image
+
+`ghcr.io/streamingfast/image-scan` is a **private** package, the actions pull it with `pull-token` (default `github.token`, logged in as `github.actor`). Two things must hold for a repository to use them:
+
+- the job has `permissions: packages: read` (or `write`) when it sets `permissions`, a job without it cannot pull and fails with exit code 10;
+- the repository is allowed to read the package: *Package settings → Manage Actions access → Add repository* (role *Read*), a maintainer of the organisation does it once per repository, see [`image-scan/RELEASING.md`](image-scan/RELEASING.md).
+
 ### `image-scan/gate`
 
 | Input | Default | |
@@ -178,6 +185,7 @@ Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-pas
 | `vex-location` | empty | File or directory of [OpenVEX](https://openvex.dev) documents in the caller repository (like `.github/vex/`): a `not_affected` statement suppresses its CVE, see [Risk acceptance with VEX](#risk-acceptance-with-vex). Needs the repository checked out |
 | `vex-author` | `.*` | Regular expression of the statement authors to accept (`docker scout --vex-author`, whose own default only accepts `docker.com` authors) |
 | `enforce` | `true` | `false` is the [advisory mode](#advisory-mode): findings are reported as warnings, never fail the build and never block `promote-tags` |
+| `pull-token` | `github.token` | Pulls the `ghcr.io/streamingfast/image-scan` container image, a private package, see [Access to the image](#access-to-the-image) |
 | `github-token` | `github.token` | Posts the PR comment (shown as `github-actions[bot]`, needs `pull-requests: write`) and the issue of a skipped scan (needs `issues: write`). Pass the bot user's token to post as that user |
 
 Output `findings` is `true` when the scan found vulnerabilities (the ones suppressed by `vex-location` do not count), `false` otherwise, also when the scan did not run. With `enforce: true` the action fails on findings anyway, so the output is for `enforce: false` callers. Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` or `skip-reason` skipped it (a failing scan fails the action). Output `skipped` is `true` when `skip-reason` bypassed the scan, `false` otherwise. Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
@@ -232,7 +240,7 @@ In the `docker.yml` of the repository, after `Build and push Docker image`, with
         # ... Slack failure steps unchanged ...
 ```
 
-With the defaults the image is `ghcr.io/<repository>:<version>-<architecture>`, set `image` when the repository tags differently. The job needs `permissions: contents: read`, `packages: write` and `pull-requests: write`.
+With the defaults the image is `ghcr.io/<repository>:<version>-<architecture>`, set `image` when the repository tags differently. The job needs `permissions: contents: read`, `packages: write` (`packages: read` is enough for the action itself, see below) and `pull-requests: write`.
 
 #### Blocking a single-push release
 
@@ -438,6 +446,7 @@ Anyone who can dispatch the workflow (write access to the repository) can use th
 | `registry-user`, `registry-password` | `github.actor`, `github.token` | To read the images from their registry |
 | `retries` | `3` | Per image |
 | `vex-location`, `vex-author` | empty, `.*` | OpenVEX documents, see [Risk acceptance with VEX](#risk-acceptance-with-vex) |
+| `pull-token` | `github.token` | Pulls the container image, see [Access to the image](#access-to-the-image) |
 | `github-token` | `github.token` | Resolves the release and manages issues |
 
 Output `slack-message` is multiline and empty when this run opened no issue. It is set even when the issue sync fails halfway, hence `!cancelled()` in the Slack step below, so issues already opened are still announced.
