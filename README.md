@@ -9,7 +9,7 @@ Releases a project from its `CHANGELOG.md` with [sfreleaser](https://github.com/
 | Action | Purpose |
 |---|---|
 | `sfreleaser/detect` | Installs sfreleaser (`sfreleaser-version`, latest by default), outputs `version`, `is_release_pr` and `preview_comment` |
-| `sfreleaser/prepare` | Runs `sfreleaser release prepare` |
+| `sfreleaser/prepare` | Runs `sfreleaser release prepare`, registering QEMU first when `deb-smoke-test` is on so the arm64 `.deb` is tested on an amd64 runner (`setup-qemu: false` to opt out) |
 | `sfreleaser/publish` | Runs `sfreleaser release publish` (installing sfreleaser when `detect` did not run), then starts `build-workflow` on the tag when set |
 
 A tag made with the GitHub Actions token triggers no workflow, so `publish` starts the build workflow itself. That workflow needs a `workflow_dispatch` trigger and must exist on the default branch.

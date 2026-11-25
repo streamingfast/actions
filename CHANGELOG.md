@@ -2,6 +2,10 @@
 
 ## v1.5.0
 
+### Added
+
+- `sfreleaser/prepare` registers QEMU emulation (`docker/setup-qemu-action@v4`, arm64) on an amd64 runner when `deb-smoke-test` is on in `.sfreleaser` or `args`, so the arm64 `.deb` is install-tested instead of skipped by sfreleaser (it skips what Docker cannot run). New `setup-qemu` input: `auto` (default), `true` or `false`. Projects without the smoke test pay nothing
+
 ### Changed
 
 - Rewrite `image-scan/gate` and `image-scan/weekly` in Go and ship them as the `ghcr.io/streamingfast/image-scan` container image (the Go program and the pinned Docker Scout CLI, `linux/amd64` and `linux/arm64`), built and published by `.github/workflows/image-scan-image.yml`. Inputs, outputs, exit codes (0 clean, 2 findings never retried, 10 infrastructure failure after the retries), the pull request comment, the job summary, the skip audit issue, the weekly issues, the VEX suppression report and `promote-tags` by digest with the digest re-check behave as in `v1.4.3`: callers keep `@v1`

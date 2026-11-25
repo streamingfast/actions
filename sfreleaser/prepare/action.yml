@@ -16,9 +16,38 @@ inputs:
     description: Homebrew tap token
     required: false
     default: ""
+  setup-qemu:
+    description: >-
+      Register QEMU emulation so the arm64 `.deb` can be smoke tested on an amd64 runner. "auto" does it
+      when `deb-smoke-test` is on in `.sfreleaser` (or in `args`), "true" always, "false" never
+    required: false
+    default: auto
 runs:
   using: composite
   steps:
+    - name: Check QEMU is needed
+      id: qemu
+      shell: bash
+      env:
+        SETUP_QEMU: ${{ inputs.setup-qemu }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        need=false
+        if [[ "$SETUP_QEMU" == "true" ]]; then
+          need=true
+        elif [[ "$SETUP_QEMU" == "auto" && "$RUNNER_ARCH" == "X64" ]]; then
+          if grep -Eqs '^[[:space:]]*deb-smoke-test:[[:space:]]*["'"'"']?true["'"'"']?[[:space:]]*(#.*)?$' .sfreleaser || [[ "$ARGS" =~ --deb-smoke-test($|[[:space:]=]) && ! "$ARGS" =~ --deb-smoke-test=false ]]; then
+            need=true
+          fi
+        fi
+        echo "needed=$need" >> "$GITHUB_OUTPUT"
+
+    - name: Set up QEMU
+      if: steps.qemu.outputs.needed == 'true'
+      uses: docker/setup-qemu-action@v4
+      with:
+        platforms: arm64
+
     - name: Show sfreleaser
       shell: bash
       run: |
