@@ -38,7 +38,7 @@ Bootstrap: the first pin of `run.sh` is the digest of the first build, until the
 
 The Docker Scout CLI is redistributed in the image under Docker's licence (below), so `ghcr.io/streamingfast/image-scan` is a **private** package. The first push creates it linked to this repository (the `org.opencontainers.image.source` label of the image and annotation of its index), private by default for the organisation.
 
-Two things cannot be done through the REST API (its package endpoints list, read, delete and restore, they neither change the visibility nor the access of a package), so they are done once in *Packages → image-scan → Package settings* of the organisation, after the first push:
+Two things cannot be done through the REST API (its package endpoints list, read, delete and restore, they neither change the visibility nor the access of a package), so they are done in *Packages → image-scan → Package settings* of the organisation, **once after the first push** (never per release: the later `v1.x.y` tags go to the same package), then again only for a repository that starts using the actions:
 
 1. check that *Danger Zone → Change visibility* says **Private** (`internal` is a GitHub Enterprise Cloud feature, the organisation is on the Team plan);
 2. *Manage Actions access → Add repository*, role **Read**, for every repository whose workflows use `image-scan/gate` or `image-scan/weekly`: their `GITHUB_TOKEN` pulls the image. When the section is not shown, turn *Inherit access from source repository* off first. A new caller repository needs the same, a pull refused with `denied` / `unauthorized` is always this.
