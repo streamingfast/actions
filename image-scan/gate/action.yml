@@ -51,14 +51,26 @@ inputs:
       credentials are not passed to the scanner. Applies when scan-paths skips the scan too (a pull request)
     required: false
     default: ""
+  skip-reason:
+    description: |
+      Audited emergency bypass. When set AND the workflow runs on workflow_dispatch, the scan is skipped (promote-tags still applies)
+      and recorded: a warning, a job summary section and a GitHub issue (labels security and image-scan-skipped) with the image,
+      its digest, the actor, this reason, the run URL and the time. On any other event the reason is ignored, with a warning,
+      and the scan runs. Needs issues: write for the issue (a failure to open it only warns). Anyone who can dispatch the
+      workflow can bypass the gate, protect the workflow with a GitHub environment requiring approval
+    required: false
+    default: ""
   github-token:
-    description: Token posting the pull request comment, needs the pull-requests write permission. The comment is authored by the token owner, pass a bot user token to post as that user
+    description: Token posting the pull request comment (needs pull-requests write) and the issue of skip-reason (needs issues write). The comment is authored by the token owner, pass a bot user token to post as that user
     required: false
     default: ${{ github.token }}
 outputs:
   scanned:
-    description: '"true" when the scan was needed and started, "false" when scan-paths skipped it, a failed scan fails the action anyway'
-    value: ${{ steps.scope.outputs.scan }}
+    description: '"true" when the scan was needed and started, "false" when scan-paths or skip-reason skipped it, a failed scan fails the action anyway'
+    value: ${{ steps.scope.outputs.scan == 'true' && steps.skip.outputs.skip != 'true' }}
+  skipped:
+    description: '"true" when skip-reason bypassed the scan (workflow_dispatch only), "false" otherwise'
+    value: ${{ steps.skip.outputs.skip }}
   promoted:
     description: Newline separated tags added to the image by promote-tags, empty when none was
     value: ${{ steps.promote.outputs.promoted }}
@@ -72,6 +84,13 @@ runs:
         SCAN_PATHS: ${{ inputs.scan-paths }}
       run: ${{ github.action_path }}/scope.sh
 
+    - name: Check if the scan is skipped on purpose
+      id: skip
+      shell: bash
+      env:
+        SKIP_REASON: ${{ inputs.skip-reason }}
+      run: ${{ github.action_path }}/skip.sh decide
+
     - name: Resolve the image
       id: image
       shell: bash
@@ -82,16 +101,28 @@ runs:
 
     - name: Resolve the digest of the image to promote
       id: digest
-      if: inputs.promote-tags != ''
+      if: ${{ inputs.promote-tags != '' || steps.skip.outputs.skip == 'true' }}
+      # Without promote-tags the digest only completes the audit of a skipped scan, it must not block the emergency release
+      continue-on-error: ${{ inputs.promote-tags == '' }}
       shell: bash
       env:
         IMAGE: ${{ steps.image.outputs.image }}
         IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
       run: ${{ github.action_path }}/promote.sh resolve
 
+    - name: Record the skipped scan
+      if: steps.skip.outputs.skip == 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        DIGEST: ${{ steps.digest.outputs.digest }}
+        SKIP_REASON: ${{ inputs.skip-reason }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: ${{ github.action_path }}/skip.sh record
+
     - name: Scan the image
       id: scan
-      if: steps.scope.outputs.scan == 'true'
+      if: steps.scope.outputs.scan == 'true' && steps.skip.outputs.skip != 'true'
       shell: bash
       env:
         IMAGE: ${{ steps.image.outputs.image }}
@@ -117,10 +148,10 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT"
 
-    # After the report, a clean scan (or no scan: scan-paths skipped it) is the only way to get here, a failed step stops the action
+    # After the report, a clean scan (or no scan: scan-paths or skip-reason skipped it) is the only way to get here, a failed step stops the action
     - name: Promote the tags
       id: promote
-      if: ${{ inputs.promote-tags != '' && (steps.scan.outcome == 'success' || steps.scope.outputs.scan == 'false') }}
+      if: ${{ inputs.promote-tags != '' && (steps.scan.outcome == 'success' || steps.scope.outputs.scan == 'false' || steps.skip.outputs.skip == 'true') }}
       shell: bash
       env:
         IMAGE: ${{ steps.image.outputs.image }}
