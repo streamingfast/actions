@@ -12,6 +12,24 @@ case "$1" in
     if ((n > 0)); then echo $((n - 1)) >"${FAKE_DIR}/login-fails"; exit 1; fi
     ;;
   pull) ;;
+  buildx)
+    # buildx imagetools inspect ... <ref>: digest-seq lists the digests returned by successive calls (the last one repeats),
+    # inspect-fails / create-fails count the calls still failing
+    case "$3" in
+      inspect)
+        n="$(cat "${FAKE_DIR}/inspect-fails" 2>/dev/null || echo 0)"
+        if ((n > 0)); then echo $((n - 1)) >"${FAKE_DIR}/inspect-fails"; exit 1; fi
+        d="$(head -n1 "${FAKE_DIR}/digest-seq" 2>/dev/null || true)"
+        if [[ -z "${d}" ]]; then d="sha256:$(printf 'a%.0s' {1..64})"; fi
+        if [[ "$(wc -l <"${FAKE_DIR}/digest-seq" 2>/dev/null || echo 0)" -gt 1 ]]; then sed -i.bak 1d "${FAKE_DIR}/digest-seq"; fi
+        echo "{\"mediaType\":\"application/vnd.oci.image.index.v1+json\",\"digest\":\"${d}\",\"size\":1}"
+        ;;
+      create)
+        n="$(cat "${FAKE_DIR}/create-fails" 2>/dev/null || echo 0)"
+        if ((n > 0)); then echo $((n - 1)) >"${FAKE_DIR}/create-fails"; exit 1; fi
+        ;;
+    esac
+    ;;
   run)
     echo "hub_user=${DOCKER_SCOUT_HUB_USER} registry_user=${DOCKER_SCOUT_REGISTRY_USER} docker_config=${DOCKER_CONFIG}" >>"${FAKE_DIR}/docker.log"
     args=("$@")

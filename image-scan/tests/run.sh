@@ -122,6 +122,79 @@ check "image: commit and amd64 by default" test "$(resolved IMAGE= IMAGE_REPOSIT
 check "image: tag name and arm64 on a tag build" test "$(resolved IMAGE= IMAGE_REPOSITORY=ghcr.io/o/r RUNNER_ARCH=ARM64 GITHUB_SHA=0123456789abcdef GITHUB_REF=refs/tags/v1.2.3)" = "ghcr.io/o/r:v1.2.3-arm64"
 check "image: unknown runner architecture fails" test -z "$(resolved IMAGE= IMAGE_REPOSITORY=r RUNNER_ARCH=X86 GITHUB_SHA=0123456789abcdef)"
 
+# ---------------------------------------------------------------- gate/promote.sh
+digest_a="sha256:$(printf 'a%.0s' {1..64})"
+digest_b="sha256:$(printf 'b%.0s' {1..64})"
+promote() { IMAGE="${PROMOTE_IMAGE:-ghcr.io/o/r:0123456}" EXPECTED_DIGEST="${digest_a}" PROMOTE_TAGS="$1" "${root}/gate/promote.sh" promote >/dev/null 2>&1; }
+promoted() { sed -n '/^promoted<</,/^PROMOTED_EOF/p' "${GITHUB_OUTPUT}" | sed '1d;$d' | paste -sd, -; }
+
+setup
+IMAGE=ghcr.io/o/r:0123456 "${root}/gate/promote.sh" resolve >/dev/null 2>&1
+check "promote: resolve exits 0" test $? -eq 0
+check "promote: resolve writes the digest" grep -q "^digest=${digest_a}$" "${GITHUB_OUTPUT}"
+check "promote: resolve inspects the image" logged "buildx imagetools inspect --format {{json .Manifest}} ghcr.io/o/r:0123456" docker.log
+
+setup
+echo 9 >"${FAKE_DIR}/inspect-fails"
+IMAGE_SCAN_RETRIES=2 IMAGE=ghcr.io/o/r:0123456 "${root}/gate/promote.sh" resolve >/dev/null 2>&1
+check "promote: resolve fails when the image cannot be inspected" test $? -eq 1
+check "promote: resolve retries" count "imagetools inspect" docker.log 2
+check "promote: resolve writes no digest on failure" test ! -s "${GITHUB_OUTPUT}"
+
+setup
+promote $'ghcr.io/o/r:v1.2.3\nghcr.io/o/r:latest\n'
+check "promote: exits 0" test $? -eq 0
+check "promote: one imagetools create for all tags, by digest" \
+  logged "buildx imagetools create --tag ghcr.io/o/r:v1.2.3 --tag ghcr.io/o/r:latest ghcr.io/o/r@${digest_a}$" docker.log
+check "promote: promoted output lists the tags" test "$(promoted)" = "ghcr.io/o/r:v1.2.3,ghcr.io/o/r:latest"
+check "promote: no registry credentials involved" not_logged "login" docker.log
+
+setup
+promote "ghcr.io/o/r:v1.2.3, ghcr.io/o/r:latest ,,ghcr.io/o/r:v1.2.3"
+check "promote: comma separated, trimmed and deduplicated" test "$(promoted)" = "ghcr.io/o/r:v1.2.3,ghcr.io/o/r:latest"
+
+setup
+promote $'ghcr.io/o/r:0123456\nghcr.io/o/r:develop'
+check "promote: the scanned image tag is skipped" test "$(promoted)" = "ghcr.io/o/r:develop"
+check "promote: ... and not passed to imagetools" not_logged "--tag ghcr.io/o/r:0123456" docker.log
+
+setup
+promote "ghcr.io/o/r:0123456"
+check "promote: only the scanned tag means nothing to do" test $? -eq 0
+check "promote: ... no imagetools create" not_logged "imagetools create" docker.log
+check "promote: ... empty promoted output" grep -q "^promoted=$" "${GITHUB_OUTPUT}"
+
+setup
+PROMOTE_IMAGE="localhost:5000/o/r:0123456" promote "localhost:5000/o/r:latest"
+check "promote: a registry port is not taken for a tag" logged "localhost:5000/o/r@${digest_a}$" docker.log
+
+setup
+PROMOTE_IMAGE="ghcr.io/o/r@${digest_a}" promote "ghcr.io/o/r:latest"
+check "promote: an image already by digest is promoted as is" logged "ghcr.io/o/r@${digest_a}$" docker.log
+
+setup
+printf '%s\n' "${digest_b}" >"${FAKE_DIR}/digest-seq"
+promote "ghcr.io/o/r:latest"
+check "promote: a tag that moved since the scan started fails" test $? -eq 1
+check "promote: ... and promotes nothing" not_logged "imagetools create" docker.log
+
+setup
+echo 1 >"${FAKE_DIR}/create-fails"
+promote "ghcr.io/o/r:latest"
+check "promote: a failed create is retried" test $? -eq 0
+check "promote: ... twice" count "imagetools create" docker.log 2
+
+setup
+echo 9 >"${FAKE_DIR}/create-fails"
+IMAGE_SCAN_RETRIES=2 promote "ghcr.io/o/r:latest"
+check "promote: create failing after retries fails" test $? -eq 1
+check "promote: ... stops after the retries" count "imagetools create" docker.log 2
+check "promote: ... nothing reported promoted" not_logged "promoted" output
+
+setup
+IMAGE_SCAN_RETRIES=abc promote "ghcr.io/o/r:latest"
+check "promote: invalid retries are rejected" test $? -eq 1
+
 # ---------------------------------------------------------------- gate/comment.sh
 setup
 echo "report body" >"${FAKE_DIR}/report.md"
