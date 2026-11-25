@@ -148,12 +148,12 @@ A repo publishing crates with crates.io Trusted Publishing adds `id-token: write
 
 Scans container images for critical/high vulnerabilities. The scanner is an implementation detail (Docker Scout today, shipped in the `ghcr.io/streamingfast/image-scan` container image next to the Go program that runs it, see `image-scan/Dockerfile`), names and inputs are scanner-agnostic so a switch to Trivy or Grype renames nothing.
 
-> **v1 → v2.** `image-scan/gate` and `image-scan/weekly` were bash scripts up to `v1.4.3` and are a Go program in a container image from `v2.0.0`. Inputs, outputs, exit codes (0 clean, 2 findings, 10 infrastructure failure), report, comment and issue behaviour are the same: change `@v1` to `@v2`, nothing else. `sfreleaser/*` is unchanged, and `image-scan/*@v1` keeps working as it did, see [Tagging](#tagging). What differs:
+> **Go rewrite (v1.5.0).** `image-scan/gate` and `image-scan/weekly` were bash scripts up to `v1.4.3` and are a Go program in a container image from `v1.5.0`, with no change for callers: same inputs, outputs, exit codes (0 clean, 2 findings, 10 infrastructure failure), report, comment and issue behaviour, same `@v1`. What differs:
 >
 > - the action pulls the image (3 attempts, linear backoff) instead of `docker/scout-cli`, and runs it with `docker run`: a runner without Docker (or not Linux) cannot run it, `date -d` and `jq` are not needed anymore;
 > - `promote-tags` retags registry-side with the Docker config of the runner (`docker/login-action`), mounted read-only into the container: logins stored by `docker login` (GitHub Container Registry, Artifact Registry/`gcr.io` with an access token) work, a Docker credential helper (`gcloud auth configure-docker`) does not;
 > - `retries` is validated at start, an invalid value fails the action even when `scan-paths` skips the scan;
-> - `scan-paths` regular expressions are Go (RE2) regular expressions, the same as POSIX extended ones apart from the exotic constructs, and match file names as they are (v1 matched the quoted names of `git diff` for non-ASCII names).
+> - `scan-paths` regular expressions are Go (RE2) regular expressions, the same as POSIX extended ones apart from the exotic constructs, and match file names as they are (v1.4 matched the quoted names of `git diff` for non-ASCII names).
 
 | Action | Purpose |
 |---|---|
@@ -214,7 +214,7 @@ In the `docker.yml` of the repository, after `Build and push Docker image`, with
       # The image is always built, only the scan is skipped on pull requests that cannot change its contents.
       - name: Scan the image
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
-        uses: streamingfast/actions/image-scan/gate@v2
+        uses: streamingfast/actions/image-scan/gate@v1
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -278,7 +278,7 @@ When `scan-paths` skips the scan (only on a pull request) the tags are promoted 
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.sha.outputs.tags }}
 
-      - uses: streamingfast/actions/image-scan/gate@v2
+      - uses: streamingfast/actions/image-scan/gate@v1
         with:
           image: ${{ steps.sha.outputs.tags }}
           promote-tags: ${{ steps.meta.outputs.tags }}
@@ -328,7 +328,7 @@ Example, `.github/vex/firehose-stellar.openvex.json`, for the Go standard librar
 ```yaml
       - uses: actions/checkout@v7 # the documents are read from the workspace
       # ... build and push the image ...
-      - uses: streamingfast/actions/image-scan/gate@v2
+      - uses: streamingfast/actions/image-scan/gate@v1
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -377,7 +377,7 @@ A scan that cannot run (login, pull, database fetch, after the retries) still fa
 
 ```yaml
       - id: scan
-        uses: streamingfast/actions/image-scan/gate@v2
+        uses: streamingfast/actions/image-scan/gate@v1
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -419,7 +419,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ... build and push the image ...
-      - uses: streamingfast/actions/image-scan/gate@v2
+      - uses: streamingfast/actions/image-scan/gate@v1
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -467,7 +467,7 @@ jobs:
     steps:
       - name: Scan the latest release
         id: scan
-        uses: streamingfast/actions/image-scan/weekly@v2
+        uses: streamingfast/actions/image-scan/weekly@v1
         with:
           dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
           dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
@@ -495,17 +495,10 @@ The image contains the [Docker Scout CLI](https://github.com/docker/scout-cli), 
 
 ## Tagging
 
-The tags of this repository cover **all** the actions, two release lines coexist:
-
-| Line | Branch | Tags | Content |
-|---|---|---|---|
-| v2 | `main` | `v2.x.y`, moving `v2` | `image-scan/*` in Go and a container image, `sfreleaser/*` |
-| v1 | `release/v1` | `v1.x.y`, moving `v1` | `image-scan/*` in bash (frozen), `sfreleaser/*` |
-
-`v1` stays where it is and keeps receiving `sfreleaser/*` fixes as `v1.x.y` from `release/v1`; a fix of `sfreleaser/*` is made on `main` and cherry-picked to `release/v1` when v1 callers need it. Consumers pin to the moving tag of their line, updated on every backward-compatible change:
+Consumers pin to `@v1`, a moving tag updated on every backward-compatible change:
 
 ```bash
-git tag -f v2 && git push origin v2 --force
+git tag -f v1 && git push origin v1 --force
 ```
 
-The `image-scan` container image is released with `v2.x.y` tags, see [`image-scan/RELEASING.md`](image-scan/RELEASING.md).
+The `image-scan` container image is released with the `v1.x.y` tags (the actions of this repository share them), see [`image-scan/RELEASING.md`](image-scan/RELEASING.md).
