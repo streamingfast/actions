@@ -1,0 +1,12 @@
+{
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {"name": "docker scout", "rules": [
+      {"id": "CVE-2025-1111", "properties": {"cvssV3_severity": "CRITICAL", "purls": ["pkg:deb/debian/openssl@3.0.1-1?os_distro=bookworm"], "affected_version": "3.0.1-1", "fixed_version": "not fixed"}},
+      {"id": "CVE-2025-2222", "properties": {"cvssV3_severity": "HIGH", "purls": ["pkg:golang/golang.org/x/net@0.10.0"], "fixed_version": "0.17.0"}},
+      {"id": "CVE-2025-3333", "properties": {"security-severity": "9.4"}, "help": {"text": "Vulnerability CVE-2025-3333\nSeverity: CRITICAL\nPackage: pkg:npm/lodash@4.17.0\nAffected version: 4.17.0\nFixed version: 4.17.21\n"}},
+      {"id": "CVE-2025-4444", "properties": {"cvssV3_severity": "HIGH", "purls": ["pkg:apk/alpine/musl@1.2.3|bad"]}}
+    ]}},
+    "results": [{"ruleId": "CVE-2025-1111"}, {"ruleId": "CVE-2025-5555"}]
+  }]
+}

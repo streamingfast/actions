@@ -27,6 +27,17 @@ inputs:
     description: Attempts for infrastructure failures per image
     required: false
     default: "3"
+  vex-location:
+    description: |
+      File or directory (relative to the workspace, check out the repository first) of OpenVEX documents, see image-scan/gate. A CVE with a
+      not_affected statement is not reported, so it opens no issue (and the open issue of a CVE that was not fixed but became suppressed
+      is closed), and is listed in the job summary. Empty applies no document
+    required: false
+    default: ""
+  vex-author:
+    description: Regular expression of the VEX statement authors to accept, applies with vex-location
+    required: false
+    default: ".*"
   github-token:
     description: Token resolving the release and managing issues, needs the contents read and issues write permissions
     required: false
@@ -60,6 +71,8 @@ runs:
         IMAGE_SCAN_REGISTRY_USER: ${{ inputs.registry-user }}
         IMAGE_SCAN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
         IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+        IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
+        IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
       run: ${{ github.action_path }}/scan.sh "$IMAGE_REPOSITORY" "$TAG" "$ARCHITECTURES" "${RUNNER_TEMP}/findings.json"
 
     - name: Sync the issues

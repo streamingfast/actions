@@ -1,0 +1,11 @@
+{
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {"name": "docker scout", "rules": [
+      {"id": "CVE-2026-97054",
+       "shortDescription": {"text": "CVE-2026-97054"},
+       "properties": {"cvssV3_severity": "HIGH", "security-severity": "7.5", "purls": ["pkg:golang/stdlib@1.27.3"], "affected_version": "1.27.3", "fixed_version": "1.27.4"}}
+    ]}},
+    "results": [{"ruleId": "CVE-2026-97054"}]
+  }]
+}

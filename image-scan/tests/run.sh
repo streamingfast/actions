@@ -7,6 +7,8 @@ root="$(dirname "${here}")"
 failures=0
 cases=0
 
+# shellcheck disable=SC2329 # called through check
+not() { ! "$@"; }
 ok() { cases=$((cases + 1)); }
 check() { # check <description> <command...>
   local desc="$1"
@@ -36,7 +38,7 @@ setup
 "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
 check "scanner: clean image exits 0" test $? -eq 0
 check "scanner: passes severities" logged "--only-severity critical,high" docker.log
-check "scanner: no --output nor bind mount of the report dir" not_logged -e "--output\|:/out" docker.log
+check "scanner: no --output nor bind mount of the report dir" not_logged "--output\|:/out" docker.log
 check "scanner: stdout is the report, stderr stays out of it" test "$(cat "${FAKE_DIR}/r.md")" = "no findings"
 check "scanner: passes the hub auth env by name" logged "hub_user=u" docker.log
 check "scanner: passwords are not on the command line" not_logged "=p" docker.log
@@ -287,6 +289,246 @@ check "comment: nothing without a report" test ! -s "${FAKE_DIR}/gh.log"
 GITHUB_EVENT_NAME=push "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md"
 check "comment: no PR comment on push" test ! -s "${FAKE_DIR}/gh.log"
 
+# ---------------------------------------------------------------- scanner.sh: VEX documents and the findings level
+fx="${here}/fixtures"
+setup
+IMAGE_SCAN_VEX_LOCATION="${fx}/vex" "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
+check "scanner vex: directory scan exits 0" test $? -eq 0
+check "scanner vex: directory mounted read-only" logged "-v ${fx}/vex:/vex:ro" docker.log
+check "scanner vex: --vex-location points at the mount" logged "--vex-location /vex " docker.log
+check "scanner vex: authors default to any (Scout only accepts docker.com ones by default)" logged "--vex-author \.\* " docker.log
+check "scanner vex: severities still passed" logged "--only-severity critical,high --vex-location" docker.log
+
+setup
+IMAGE_SCAN_VEX_LOCATION="${fx}/vex/openvex.json" IMAGE_SCAN_VEX_AUTHOR='<.*@streamingfast.io>' "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
+check "scanner vex: a file is mounted as a file" logged "-v ${fx}/vex/openvex.json:/vex/openvex.json:ro" docker.log
+check "scanner vex: --vex-location points at the file" logged "--vex-location /vex/openvex.json " docker.log
+check "scanner vex: vex-author is passed" logged "--vex-author <.\*@streamingfast.io> " docker.log
+
+setup
+(cd "${fx}" && IMAGE_SCAN_VEX_LOCATION="vex" "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1)
+check "scanner vex: a relative location is mounted by its absolute path" logged "-v ${fx}/vex:/vex:ro" docker.log
+
+setup
+IMAGE_SCAN_VEX_LOCATION="${FAKE_DIR}/nope" "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >"${FAKE_DIR}/out.txt" 2>&1
+check "scanner vex: a missing location fails (1)" test $? -eq 1
+check "scanner vex: ... with an error naming it" grep -q "::error::vex-location '${FAKE_DIR}/nope' does not exist" "${FAKE_DIR}/out.txt"
+check "scanner vex: ... before any scan" not_logged "^run " docker.log
+
+setup
+IMAGE_SCAN_VEX_LOCATION="${fx}/vex-invalid" "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >"${FAKE_DIR}/out.txt" 2>&1
+check "scanner vex: a document that is not JSON fails (1)" test $? -eq 1
+check "scanner vex: ... naming it" grep -q "bad.json is not valid JSON" "${FAKE_DIR}/out.txt"
+check "scanner vex: ... before any scan" not_logged "^run " docker.log
+
+setup
+"${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
+check "scanner vex: no documents, no vex flag" not_logged "vex" docker.log
+check "scanner vex: ... and no mount" not_logged " -v " docker.log
+
+setup
+echo 2 >"${FAKE_DIR}/img_1.rc"
+out="$("${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" 2>&1)"
+check "scanner level: findings are an error by default" grep -q "^::error::critical,high vulnerabilities found in img:1$" <<<"${out}"
+out="$(IMAGE_SCAN_FINDINGS_LEVEL=warning "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" 2>&1)"
+check "scanner level: a warning on request" grep -q "^::warning::critical,high vulnerabilities found in img:1$" <<<"${out}"
+IMAGE_SCAN_FINDINGS_LEVEL=warning "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
+check "scanner level: a warning level keeps exit 2" test $? -eq 2
+IMAGE_SCAN_FINDINGS_LEVEL=loud "${root}/lib/scanner.sh" img:1 "${FAKE_DIR}/r.md" >/dev/null 2>&1
+check "scanner level: an unknown level is rejected" test $? -eq 1
+
+# ---------------------------------------------------------------- lib/report.sh
+# shellcheck source=../lib/report.sh
+source "${root}/lib/report.sh"
+rows="$(sarif_findings "${fx}/table.sarif")"
+row() { jq -r --arg id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]' <<<"${rows}"; }
+check "report: one row per CVE (rules and results)" test "$(jq length <<<"${rows}")" -eq 5
+check "report: cvssV3_severity" test "$(row CVE-2025-2222 severity)" = high
+check "report: security-severity score without a level" test "$(row CVE-2025-3333 severity)" = critical
+check "report: unknown severity" test "$(row CVE-2025-5555 severity)" = unknown
+check "report: package from the purl, without type and qualifiers" test "$(row CVE-2025-1111 package)" = openssl
+check "report: golang package keeps its module path" test "$(row CVE-2025-2222 package)" = golang.org/x/net
+check "report: installed from affected_version" test "$(row CVE-2025-1111 installed)" = 3.0.1-1
+check "report: installed from the purl version otherwise" test "$(row CVE-2025-2222 installed)" = 0.10.0
+check "report: fixed version" test "$(row CVE-2025-2222 fixed)" = 0.17.0
+check "report: 'not fixed' is no fix" test "$(row CVE-2025-1111 fixed)" = ""
+check "report: package, installed and fixed from the help text" test "$(row CVE-2025-3333 package):$(row CVE-2025-3333 installed):$(row CVE-2025-3333 fixed)" = "lodash:4.17.0:4.17.21"
+check "report: rows are sorted by severity then id" test "$(jq -r 'map(.id) | join(",")' <<<"${rows}")" = "CVE-2025-1111,CVE-2025-3333,CVE-2025-2222,CVE-2025-4444,CVE-2025-5555"
+check "report: an unreadable report gives no row" test "$(sarif_findings /dev/null)" = "[]"
+echo '{ not json' >"${FAKE_DIR}/bad.sarif"
+check "report: ... also when it is not JSON" test "$(sarif_findings "${FAKE_DIR}/bad.sarif")" = "[]"
+check "report: text table names the CVEs and says no fix" bash -c "source '${root}/lib/report.sh'; findings_text '${rows//\'/}' | grep -q 'CVE-2025-1111 .*critical.*no fix'"
+md="$(findings_markdown "${rows}")"
+check "report: markdown table has a header" grep -q "^| CVE | Severity | Package | Installed | Fixed |$" <<<"${md}"
+check "report: markdown row" grep -q '^| CVE-2025-2222 | high | `golang.org/x/net` | 0.10.0 | 0.17.0 |$' <<<"${md}"
+check "report: markdown escapes pipes" grep -q '1.2.3|bad\|1.2.3\\|bad' <<<"${md}"
+check "report: markdown is capped" grep -q "… and 3 more" <<<"$(findings_markdown "${rows}" 2)"
+
+statements="$(vex_statements "${fx}/vex")"
+check "report: statements of a directory" test "$(jq length <<<"${statements}")" -eq 3
+check "report: statements of a file" test "$(vex_statements "${fx}/vex/openvex.json" | jq length)" -eq 3
+check "report: a statement inherits the author of its document" test "$(jq -r '.[0].author' <<<"${statements}")" = "SF Security <security@streamingfast.io>"
+check "report: justification and impact" test "$(jq -r '.[0].justification' <<<"${statements}")" = inline_mitigations_already_exist
+check "report: string form of the vulnerability (OpenVEX before 0.2)" test "$(jq -r '.[2].id' <<<"${statements}")" = CVE-2025-9999
+check "report: no location, no statement" test "$(vex_statements "${FAKE_DIR}/nope")" = "[]"
+mkdir "${FAKE_DIR}/two"
+for ts in 2026-01-01T00:00:00Z 2026-03-01T00:00:00Z 2026-02-01T00:00:00Z; do
+  printf '{"statements": [{"vulnerability": {"name": "CVE-2025-2222"}, "status": "not_affected", "justification": "j-%s", "timestamp": "%s"}]}' "${ts}" "${ts}" >"${FAKE_DIR}/two/${ts}.json"
+done
+two="$(suppressed_findings "${rows}" '[]' "$(vex_statements "${FAKE_DIR}/two")")"
+check "report: the most recent statement wins" test "$(jq -r '.[] | select(.id == "CVE-2025-2222") | .justification' <<<"${two}")" = "j-2026-03-01T00:00:00Z"
+check "report: a CVE without statement is suppressed without justification" test "$(jq -r '.[] | select(.id == "CVE-2025-1111") | .status' <<<"${two}")" = ""
+check "report: only CVEs missing from the active list are suppressed" test "$(suppressed_findings "${rows}" "${rows}" '[]')" = "[]"
+
+# ---------------------------------------------------------------- gate/scan.sh
+img=ghcr.io/o/r:abc-amd64
+key=ghcr.io_o_r_abc-amd64
+gate_scan() { : >"${GITHUB_OUTPUT}"; env IMAGE_SCAN_RETRIES=1 "$@" "${root}/gate/scan.sh" "${img}" "${FAKE_DIR}/report.md" >"${FAKE_DIR}/out.txt" 2>&1; }
+# shellcheck disable=SC2329
+report_has() { grep -q -- "$1" "${FAKE_DIR}/report.md"; }
+
+setup
+gate_scan
+check "gate scan: clean image exits 0" test $? -eq 0
+check "gate scan: ... findings=false" grep -q "^findings=false$" "${GITHUB_OUTPUT}"
+check "gate scan: ... the report is the scanner's, as before" test "$(cat "${FAKE_DIR}/report.md")" = "no findings"
+check "gate scan: ... one scan only" count "^run " docker.log 1
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan
+check "gate scan: findings exit 2" test $? -eq 2
+check "gate scan: ... findings=true, written before failing" grep -q "^findings=true$" "${GITHUB_OUTPUT}"
+check "gate scan: ... an error annotation" grep -q "^::error::critical,high vulnerabilities found in ${img}$" "${FAKE_DIR}/out.txt"
+check "gate scan: ... no warning annotation" not_logged "::warning::" out.txt
+check "gate scan: ... the log names the CVEs" grep -q "CVE-2025-1111  *critical  *openssl  *3.0.1-1  *no fix" "${FAKE_DIR}/out.txt"
+check "gate scan: ... the log shows the fixed version" grep -q "CVE-2025-2222  *high  *golang.org/x/net  *0.10.0  *0.17.0" "${FAKE_DIR}/out.txt"
+check "gate scan: ... two scans, the report and the CVEs" count "^run " docker.log 2
+check "gate scan: ... the CVEs come from a sarif scan" logged "--format sarif" docker.log
+check "gate scan: ... the report has the CVE table" report_has "^### Vulnerabilities (5)$"
+check "gate scan: ... first" test "$(head -n1 "${FAKE_DIR}/report.md")" = "### Vulnerabilities (5)"
+check "gate scan: ... then the scanner report" report_has "^# findings in ${img}$"
+check "gate scan: ... no advisory banner" not report_has "Advisory mode"
+check "gate scan: ... no suppressed section" not report_has "Suppressed"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan IMAGE_SCAN_ENFORCE=false
+check "gate scan advisory: findings exit 0" test $? -eq 0
+check "gate scan advisory: ... findings=true" grep -q "^findings=true$" "${GITHUB_OUTPUT}"
+check "gate scan advisory: ... a warning annotation, no error" grep -q "^::warning::critical,high vulnerabilities found in ${img}$" "${FAKE_DIR}/out.txt"
+check "gate scan advisory: ... says it does not fail" grep -q "^::warning::Advisory mode (enforce: false)" "${FAKE_DIR}/out.txt"
+check "gate scan advisory: ... never an error" not_logged "::error::" out.txt
+check "gate scan advisory: ... the CVEs are still named in the log" grep -q "CVE-2025-1111" "${FAKE_DIR}/out.txt"
+check "gate scan advisory: ... and in the report" report_has "^### Vulnerabilities (5)$"
+check "gate scan advisory: ... which says it is advisory" report_has "^> Advisory mode"
+check "gate scan advisory: ... above the scanner report" report_has "^### Scanner report$"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+gate_scan IMAGE_SCAN_ENFORCE=FALSE
+check "gate scan advisory: the value is case insensitive" test $? -eq 0
+setup
+gate_scan IMAGE_SCAN_ENFORCE=maybe
+check "gate scan: an invalid enforce is rejected (1)" test $? -eq 1
+check "gate scan: ... before any scan" not_logged "^run " docker.log
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+gate_scan IMAGE_SCAN_ENFORCE=
+check "gate scan: an empty enforce enforces" test $? -eq 2
+
+setup
+echo 9 >"${FAKE_DIR}/login-fails"
+gate_scan IMAGE_SCAN_ENFORCE=false
+check "gate scan advisory: an infrastructure failure still fails (10)" test $? -eq 10
+check "gate scan advisory: ... no findings output" not_logged "findings" output
+
+# VEX: everything suppressed
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+echo 0 >"${FAKE_DIR}/${key}.vex.rc"
+cp "${fx}/stdlib.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan IMAGE_SCAN_VEX_LOCATION="${fx}/vex"
+check "gate scan vex: a suppressed CVE passes the gate" test $? -eq 0
+check "gate scan vex: ... findings=false" grep -q "^findings=false$" "${GITHUB_OUTPUT}"
+check "gate scan vex: ... the scan decides with the documents" logged "--vex-location /vex .*${img}$" docker.log
+check "gate scan vex: ... the CVEs without them are listed too" count "^run " docker.log 2
+check "gate scan vex: ... the report lists the suppressed CVE" report_has "^### Suppressed by VEX (1)$"
+check "gate scan vex: ... with its id, package and fixed in" report_has "CVE-2026-97054 | high | \`stdlib\` | 1.27.3"
+check "gate scan vex: ... its justification" report_has "inline_mitigations_already_exist"
+check "gate scan vex: ... its impact statement, with the issue link" report_has "issues/57"
+check "gate scan vex: ... its author and date" report_has "SF Security <security@streamingfast.io> | 2026-11-24T10:00:00Z |"
+check "gate scan vex: ... no vulnerability section" not report_has "^### Vulnerabilities"
+check "gate scan vex: ... the log names it" grep -q "^CVE-2026-97054 (high) stdlib 1.27.3: inline_mitigations_already_exist - Risk accepted" "${FAKE_DIR}/out.txt"
+check "gate scan vex: ... as a notice" grep -q "^::notice::1 vulnerabilities of ${img} are suppressed by the VEX documents of ${fx}/vex: CVE-2026-97054$" "${FAKE_DIR}/out.txt"
+check "gate scan vex: ... no error" not_logged "::error::" out.txt
+check "gate scan vex: a statement Scout ignores warns" grep -q "^::warning::VEX statement for CVE-2025-2222 in .*openvex.json has status under_investigation: only not_affected suppresses" "${FAKE_DIR}/out.txt"
+check "gate scan vex: a statement matching nothing is noticed" grep -q "^::notice::VEX statement for CVE-2025-9999 in .*matches no critical/high finding of ${img}, remove it" "${FAKE_DIR}/out.txt"
+check "gate scan vex: the documents were mounted in the first scan only" count " -v " docker.log 1
+check "gate scan vex: the unfiltered scan has no vex flag" test "$(grep -c -- "--format sarif" "${FAKE_DIR}/docker.log")" -eq 1
+check "gate scan vex: ... the sarif scan does not mount the documents" not_logged "-v .*--format sarif" docker.log
+
+# the same report goes to the job summary and the pull request
+: >"${FAKE_DIR}/gh.log"; echo '[]' >"${FAKE_DIR}/comments.json"; : >"${GITHUB_STEP_SUMMARY}"
+PR_NUMBER=7 GITHUB_EVENT_NAME=pull_request "${root}/gate/comment.sh" "${img}" "${FAKE_DIR}/report.md"
+check "gate scan vex: the suppressed CVEs are in the pull request comment" logged "Suppressed by VEX (1)" gh.log
+check "gate scan vex: ... and in the job summary" grep -q "CVE-2026-97054" "${GITHUB_STEP_SUMMARY}"
+
+# VEX: findings remain
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+echo 2 >"${FAKE_DIR}/${key}.vex.rc"
+jq '.runs[0].tool.driver.rules += [{"id": "CVE-2026-97054", "properties": {"cvssV3_severity": "HIGH", "purls": ["pkg:golang/stdlib@1.27.3"], "fixed_version": "1.27.4"}}]' "${fx}/table.sarif" >"${FAKE_DIR}/${key}.sarif"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.vex.sarif"
+gate_scan IMAGE_SCAN_VEX_LOCATION="${fx}/vex"
+check "gate scan vex: remaining findings still fail (2)" test $? -eq 2
+check "gate scan vex: ... findings=true" grep -q "^findings=true$" "${GITHUB_OUTPUT}"
+check "gate scan vex: ... three scans" count "^run " docker.log 3
+check "gate scan vex: ... the table lists what is left" report_has "^### Vulnerabilities (5)$"
+check "gate scan vex: ... the suppressed one is not in it" test "$(sed -n '/^### Vulnerabilities/,/^### Suppressed/p' "${FAKE_DIR}/report.md" | grep -c CVE-2026-97054)" -eq 0
+check "gate scan vex: ... but listed as suppressed" report_has "^### Suppressed by VEX (1)$"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+echo 2 >"${FAKE_DIR}/${key}.vex.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan IMAGE_SCAN_VEX_LOCATION="${fx}/vex" IMAGE_SCAN_ENFORCE=false
+check "gate scan vex advisory: remaining findings exit 0" test $? -eq 0
+check "gate scan vex advisory: ... findings=true" grep -q "^findings=true$" "${GITHUB_OUTPUT}"
+check "gate scan vex: nothing suppressed, no section" not report_has "Suppressed"
+
+# best effort passes
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+echo 10 >"${FAKE_DIR}/${key}.badsarif"
+gate_scan
+check "gate scan: a failing CVE listing does not change the outcome (2)" test $? -eq 2
+check "gate scan: ... it warns" grep -q "^::warning::Cannot list the CVEs of ${img}" "${FAKE_DIR}/out.txt"
+check "gate scan: ... the scanner report is kept" report_has "^# findings in ${img}$"
+check "gate scan: ... findings=true" grep -q "^findings=true$" "${GITHUB_OUTPUT}"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+echo 0 >"${FAKE_DIR}/${key}.vex.rc"
+echo 10 >"${FAKE_DIR}/${key}.badsarif"
+gate_scan IMAGE_SCAN_VEX_LOCATION="${fx}/vex"
+check "gate scan vex: failing to list the suppressed CVEs does not fail a clean scan" test $? -eq 0
+check "gate scan vex: ... it warns" grep -q "^::warning::Cannot list the CVEs of ${img}" "${FAKE_DIR}/out.txt"
+check "gate scan vex: ... the report stays the scanner's" test "$(cat "${FAKE_DIR}/report.md")" = "no findings"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+printf '{"runs": []}' >"${FAKE_DIR}/${key}.sarif"
+gate_scan
+check "gate scan: findings without a readable CVE still fail (2)" test $? -eq 2
+check "gate scan: ... warn about it" grep -q "^::warning::The scanner reported vulnerabilities in ${img} but none could be read" "${FAKE_DIR}/out.txt"
+
+setup
+gate_scan IMAGE_SCAN_VEX_LOCATION="${FAKE_DIR}/nope"
+check "gate scan vex: a missing location fails the scan" test $? -eq 1
+
 # ---------------------------------------------------------------- weekly/scan.sh
 setup
 repo=ghcr.io/o/r
@@ -329,6 +571,38 @@ done
 setup
 "${root}/weekly/scan.sh" "${repo}" v1.2.3 "amd64" "${FAKE_DIR}/findings.json" >/dev/null 2>&1
 check "weekly scan: clean images give an empty list" test "$(jq length "${FAKE_DIR}/findings.json")" -eq 0
+
+# VEX documents: suppressed CVEs are no findings, so they open no issue
+setup
+echo 2 >"${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.rc"
+echo 0 >"${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.vex.rc"
+cp "${here}/fixtures/critical-and-high.sarif" "${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.sarif"
+mkdir "${FAKE_DIR}/vex"
+echo '{"author": "SF <sec@streamingfast.io>", "statements": [{"vulnerability": {"name": "CVE-2025-0001"}, "status": "not_affected", "justification": "component_not_present", "impact_statement": "risk-accepted #12"}]}' >"${FAKE_DIR}/vex/doc.json"
+IMAGE_SCAN_VEX_LOCATION="${FAKE_DIR}/vex" "${root}/weekly/scan.sh" "${repo}" v1.2.3 "amd64" "${FAKE_DIR}/findings.json" >/dev/null 2>&1
+check "weekly scan vex: everything suppressed exits 0" test $? -eq 0
+check "weekly scan vex: ... no finding, so no issue" test "$(jq length "${FAKE_DIR}/findings.json")" -eq 0
+check "weekly scan vex: the documents are mounted in the scan" logged "-v ${FAKE_DIR}/vex:/vex:ro" docker.log
+check "weekly scan vex: the summary lists what was suppressed" grep -q "^- CVE-2025-0001 (critical) unknown unknown: component_not_present - risk-accepted #12 \[ghcr.io/o/r:v1.2.3-amd64\]$" "${GITHUB_STEP_SUMMARY}"
+check "weekly scan vex: ... and says no issue is opened" grep -q "no issue opened" "${GITHUB_STEP_SUMMARY}"
+
+setup
+echo 2 >"${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.rc"
+cp "${here}/fixtures/critical-and-high.sarif" "${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.sarif"
+cp "${here}/fixtures/high-only.sarif" "${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.vex.sarif"
+echo 2 >"${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.vex.rc"
+mkdir "${FAKE_DIR}/vex"
+IMAGE_SCAN_VEX_LOCATION="${FAKE_DIR}/vex" "${root}/weekly/scan.sh" "${repo}" v1.2.3 "amd64" "${FAKE_DIR}/findings.json" >/dev/null 2>&1
+check "weekly scan vex: remaining findings are reported" test "$(jq length "${FAKE_DIR}/findings.json")" -gt 0
+check "weekly scan vex: ... without the suppressed one" test "$(jq '[.[] | select(.id == "CVE-2025-0001")] | length' "${FAKE_DIR}/findings.json")" -eq 0
+check "weekly scan vex: ... which is in the summary" grep -q "CVE-2025-0001 (critical)" "${GITHUB_STEP_SUMMARY}"
+
+setup
+echo 2 >"${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.rc"
+cp "${here}/fixtures/high-only.sarif" "${FAKE_DIR}/ghcr.io_o_r_v1.2.3-amd64.sarif"
+"${root}/weekly/scan.sh" "${repo}" v1.2.3 "amd64" "${FAKE_DIR}/findings.json" >/dev/null 2>&1
+check "weekly scan: without documents there is no extra scan" count "^run " docker.log 1
+check "weekly scan: ... and no suppressed section" not grep -q "Suppressed" "${GITHUB_STEP_SUMMARY}"
 
 # ---------------------------------------------------------------- weekly/issues.sh
 setup

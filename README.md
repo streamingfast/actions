@@ -150,7 +150,7 @@ Scans container images for critical/high vulnerabilities. The scanner is an impl
 
 | Action | Purpose |
 |---|---|
-| `image-scan/gate` | CI gate: fails on findings, writes the report to the job summary and, on a pull request, to a comment |
+| `image-scan/gate` | CI gate: fails on findings (unless advisory), names the CVEs, honors VEX risk acceptances, writes the report to the job summary and, on a pull request, to a comment |
 | `image-scan/weekly` | Scans the latest release and keeps one GitHub issue per CVE |
 
 Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-password`) and run on a `ubuntu-*` runner (`date -d` is GNU only, `image-scan/weekly/issues.sh` falls back to BSD `date -v`).
@@ -168,9 +168,21 @@ Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-pas
 | `scan-paths` | empty | Newline separated extended regexes (anchor with `^`). On a `pull_request` the scan is skipped unless a file changed by the PR matches one. Empty always scans |
 | `promote-tags` | empty | Newline or comma separated full image refs added to the image once the scan is clean, see [Blocking a single-push release](#blocking-a-single-push-release) |
 | `skip-reason` | empty | Audited emergency bypass of the scan, only honored on `workflow_dispatch`, see [Emergency bypass](#emergency-bypass) |
+| `vex-location` | empty | File or directory of [OpenVEX](https://openvex.dev) documents in the caller repository (like `.github/vex/`): a `not_affected` statement suppresses its CVE, see [Risk acceptance with VEX](#risk-acceptance-with-vex). Needs the repository checked out |
+| `vex-author` | `.*` | Regular expression of the statement authors to accept (`docker scout --vex-author`, whose own default only accepts `docker.com` authors) |
+| `enforce` | `true` | `false` is the [advisory mode](#advisory-mode): findings are reported as warnings, never fail the build and never block `promote-tags` |
 | `github-token` | `github.token` | Posts the PR comment (shown as `github-actions[bot]`, needs `pull-requests: write`) and the issue of a skipped scan (needs `issues: write`). Pass the bot user's token to post as that user |
 
-Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` or `skip-reason` skipped it (a failing scan fails the action). Output `skipped` is `true` when `skip-reason` bypassed the scan, `false` otherwise. Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
+Output `findings` is `true` when the scan found vulnerabilities (the ones suppressed by `vex-location` do not count), `false` otherwise, also when the scan did not run. With `enforce: true` the action fails on findings anyway, so the output is for `enforce: false` callers. Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` or `skip-reason` skipped it (a failing scan fails the action). Output `skipped` is `true` when `skip-reason` bypassed the scan, `false` otherwise. Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
+
+On findings the log and the job summary (and so the PR comment) name the CVEs first, before the scanner's own report, from a second scan in SARIF (`Detected 11 vulnerable packages with a total of 53 vulnerabilities` only counts them):
+
+```
+CVE             SEVERITY  PACKAGE  INSTALLED  FIXED
+CVE-2026-97054  high      stdlib   1.27.3     1.27.4
+```
+
+`FIXED` is `no fix` when there is no fixed version. The listing is best effort: when that second scan fails the action warns, the report has no table and the outcome is the one of the first scan.
 
 Exit codes of the scanner: findings fail the step right away (no retry), anything else (login, pull, authentication, database fetch) is retried with a linear backoff and then fails. The PR comment is found by a hidden marker containing the image, so a matrix of architectures keeps one comment each, and is best-effort (`continue-on-error`).
 
@@ -263,6 +275,84 @@ When `scan-paths` skips the scan (only on a pull request) the tags are promoted 
 
 Two `docker/metadata-action` steps produce the two lists, one with only `type=sha` for `build-push-action`, the other with all the tags for `promote-tags` (a sha tag listed in both is skipped by the gate as it is the scanned image). Filtering one list instead works too, `image` must be a single tag. The commit sha tag stays in the registry whatever the scan says, it is the only tag that exists for an image that failed.
 
+#### Risk acceptance with VEX
+
+A CVE that cannot be fixed yet (the fix is not released) can be accepted with a [VEX](https://openvex.dev) statement kept in the repository, reviewed in a pull request, instead of bypassing the whole gate with `skip-reason`. Set `vex-location` to a file or a directory of OpenVEX documents (`*.json`, `*.jsonld`): it is mounted read-only into the scanner container and passed to `docker scout cves --vex-location` with `--vex-author`.
+
+What Docker Scout does with the documents ([Docker documentation](https://docs.docker.com/scout/how-tos/create-exceptions-vex/)):
+
+- **only `not_affected` suppresses a CVE.** `fixed`, `affected` and `under_investigation` are documentation, they suppress nothing, and the gate warns about such a statement (`under_investigation` is therefore not a risk acceptance, the gate keeps failing);
+- the default `--vex-author` only accepts `<.*@docker.com>` authors, the gate passes `.*` (`vex-author`) so the statements of the repository apply; restrict it to your team if the repository accepts documents from other places;
+- a suppressed CVE is neither in the report nor in the exit code.
+
+An exception must stay visible, so on every run the log, the job summary and the PR comment list the suppressed CVEs under **Suppressed by VEX** with the justification, impact statement, author and date of the statement, and the action warns about statements that cannot work (not `not_affected`) or match no finding any more (the fix shipped, remove them). To list them the gate scans a second time without the documents.
+
+Example, `.github/vex/firehose-stellar.openvex.json`, for the Go standard library CVE of a binary copied from `firehose-core` (built with Go 1.27.3, fixed in Go 1.27.4):
+
+```json
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/streamingfast/firehose-stellar/.github/vex/firehose-stellar.openvex.json",
+  "author": "Platform Team <platform@streamingfast.io>",
+  "timestamp": "2026-11-24T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {"name": "CVE-2026-97054"},
+      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "Risk accepted, see https://github.com/streamingfast/firehose-stellar/issues/57. Fixed in Go 1.27.4, remove when firecore is rebuilt with it",
+      "timestamp": "2026-11-24T10:00:00Z"
+    }
+  ]
+}
+```
+
+```yaml
+      - uses: actions/checkout@v7 # the documents are read from the workspace
+      # ... build and push the image ...
+      - uses: streamingfast/actions/image-scan/gate@v1
+        with:
+          dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
+          dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
+          vex-location: .github/vex/
+```
+
+Rules of the exceptions (SDLC policy):
+
+- every statement links its `risk-accepted` issue in `impact_statement` (the issue holds the risk assessment and the approval) and the pull request adding it is the approval trail;
+- `justification` is one of the OpenVEX values (`component_not_present`, `vulnerable_code_not_present`, `vulnerable_code_not_in_execute_path`, `vulnerable_code_cannot_be_controlled_by_adversary`, `inline_mitigations_already_exist`), the statement must be true: pick the one that holds, and if none does the CVE is not an exception to hide but a bypass to record with `skip-reason`;
+- remove the statement (and close the issue) in the pull request that ships the fix. The gate notices the statement matching no finding any more, but only a person removes it;
+- `products` must match the image: the example uses the purl of the repository without a version, so it holds for every tag and digest. The OpenVEX document is not validated against the image by the gate, check the first run: the CVE must be listed under **Suppressed by VEX**, if it stays in **Vulnerabilities** the product or the author did not match.
+
+`image-scan/weekly` takes the same `vex-location` and `vex-author` inputs: a CVE suppressed by a statement is not reported, so it opens no issue, an issue open for it is closed (with the usual comment, which then reads as a fix) and the job summary lists the suppressed CVEs.
+
+#### Advisory mode
+
+A repository that ships binaries of an upstream project cannot fix their CVEs (a fork of an upstream chain node, for example) and may decide not to enforce the gate. `enforce: false`:
+
+- scans and reports as usual: job summary, CVE table, PR comment (with an advisory banner) and the CVEs named in the log;
+- annotates the findings with `::warning::` instead of `::error::` and exits 0;
+- applies `promote-tags` as it does on a clean scan: nothing blocks the release;
+- sets the output `findings` to `true`, for a later step to alert on (a Slack message, an issue).
+
+A scan that cannot run (login, pull, database fetch, after the retries) still fails the action even then: nothing is known about the image, and a silent pass would hide a broken scanner. `skip-reason` and `scan-paths` work as usual.
+
+```yaml
+      - id: scan
+        uses: streamingfast/actions/image-scan/gate@v1
+        with:
+          dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
+          dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
+          enforce: false
+          promote-tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Alert on findings
+        if: ${{ steps.scan.outputs.findings == 'true' }}
+        run: echo "::notice::Vulnerabilities in the image, see the job summary"
+```
+
 #### Emergency bypass
 
 A release can be urgent (a hard-fork upgrade with a deadline) while the gate fails on a CVE in upstream code that cannot be fixed in time, or the scanner is down. `skip-reason` is a documented, auditable exception, not a silent skip. When it is not blank **and** the run is a `workflow_dispatch`:
@@ -311,6 +401,7 @@ Anyone who can dispatch the workflow (write access to the repository) can use th
 | `dockerhub-user`, `dockerhub-password` | required | Docker Hub credentials |
 | `registry-user`, `registry-password` | `github.actor`, `github.token` | To read the images from their registry |
 | `retries` | `3` | Per image |
+| `vex-location`, `vex-author` | empty, `.*` | OpenVEX documents, see [Risk acceptance with VEX](#risk-acceptance-with-vex) |
 | `github-token` | `github.token` | Resolves the release and manages issues |
 
 Output `slack-message` is multiline and empty when this run opened no issue. It is set even when the issue sync fails halfway, hence `!cancelled()` in the Slack step below, so issues already opened are still announced.
