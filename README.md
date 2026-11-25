@@ -166,9 +166,10 @@ Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-pas
 | `severities` | `critical,high` | |
 | `retries` | `3` | Attempts for infrastructure failures, findings fail at once |
 | `scan-paths` | empty | Newline separated extended regexes (anchor with `^`). On a `pull_request` the scan is skipped unless a file changed by the PR matches one. Empty always scans |
+| `promote-tags` | empty | Newline or comma separated full image refs added to the image once the scan is clean, see [Blocking a single-push release](#blocking-a-single-push-release) |
 | `github-token` | `github.token` | Posts the PR comment (shown as `github-actions[bot]`), needs `pull-requests: write`. Pass the bot user's token to post as that user |
 
-Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` skipped it (a failing scan fails the action).
+Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` skipped it (a failing scan fails the action). Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
 
 Exit codes of the scanner: findings fail the step right away (no retry), anything else (login, pull, authentication, database fetch) is retried with a linear backoff and then fails. The PR comment is found by a hidden marker containing the image, so a matrix of architectures keeps one comment each, and is best-effort (`continue-on-error`).
 
@@ -206,6 +207,60 @@ In the `docker.yml` of the repository, after `Build and push Docker image`, with
 ```
 
 With the defaults the image is `ghcr.io/<repository>:<version>-<architecture>`, set `image` when the repository tags differently. The job needs `permissions: contents: read`, `packages: write` and `pull-requests: write`.
+
+#### Blocking a single-push release
+
+A repository that builds and pushes one multi-arch image with a single `docker/build-push-action` step, release tags included (`vX.Y.Z`, `develop`, `latest`, ...), cannot be blocked by the gate: the tags are live before the scan runs. Push only the immutable commit tag in the build and let the gate add the others with `promote-tags`:
+
+1. Before the scan, the gate resolves the image to its digest.
+2. After a **clean** scan, it checks the image still has that digest (a moved tag fails the action) and adds each tag to it with `docker buildx imagetools create --tag <tag> ... <image>@<digest>`: a registry-side retag, no rebuild, the multi-arch index and its attestations are kept. The tag equal to the scanned image is skipped, a failed call is retried (`retries`) and a promotion that still fails fails the action.
+3. On findings (exit 2) or when the scanner cannot run (exit 10), nothing is promoted and the release tags never exist.
+
+When `scan-paths` skips the scan (only on a pull request) the tags are promoted anyway: the skip means the pull request cannot change the image, and the tags of a pull request build are throwaway.
+
+`imagetools` runs on the runner's Docker daemon, so the job must already be logged in to the registry of the image and of the tags with push access (the build needs it as well), the registry credentials of the gate are not used for this and never reach the scanner container.
+
+```yaml
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Release and moving tags, promoted by the gate once the image is clean
+      - name: Tags to promote
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # The immutable tag only: the commit sha, `image` of the gate
+      - name: Tag to push
+        id: sha
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=sha,format=short,prefix=
+
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.sha.outputs.tags }}
+
+      - uses: streamingfast/actions/image-scan/gate@v1
+        with:
+          image: ${{ steps.sha.outputs.tags }}
+          promote-tags: ${{ steps.meta.outputs.tags }}
+          dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
+          dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
+```
+
+Two `docker/metadata-action` steps produce the two lists, one with only `type=sha` for `build-push-action`, the other with all the tags for `promote-tags` (a sha tag listed in both is skipped by the gate as it is the scanned image). Filtering one list instead works too, `image` must be a single tag. The commit sha tag stays in the registry whatever the scan says, it is the only tag that exists for an image that failed.
 
 ### `image-scan/weekly`
 

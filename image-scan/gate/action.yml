@@ -31,7 +31,7 @@ inputs:
     required: false
     default: critical,high
   retries:
-    description: Attempts for infrastructure failures (login, pull, authentication, database fetch). Findings are never retried
+    description: Attempts for infrastructure failures (login, pull, authentication, database fetch, registry calls of promote-tags). Findings are never retried
     required: false
     default: "3"
   scan-paths:
@@ -39,6 +39,16 @@ inputs:
       Newline separated extended regular expressions (anchor with ^). On a pull_request the scan is skipped unless a changed
       file matches one, the image build is the caller's and runs either way. Empty always scans. The caller must check out
       with fetch-depth: 2 so HEAD^1 (the base branch) exists
+    required: false
+    default: ""
+  promote-tags:
+    description: |
+      Newline or comma separated full image refs (like the tags output of docker/metadata-action) added to the image once it is
+      scanned clean, with docker buildx imagetools create: a registry-side retag of the scanned digest, no rebuild, the multi-arch
+      index and attestations are kept. Nothing is added when the scan finds vulnerabilities or cannot run. The tag equal to the image
+      is skipped. Pushing only an immutable tag (like the commit sha) in the build, and the release tags here, makes the gate block
+      the release. The runner must already be logged in to the registry of the image and of the tags (as the build requires), the
+      credentials are not passed to the scanner. Applies when scan-paths skips the scan too (a pull request)
     required: false
     default: ""
   github-token:
@@ -49,6 +59,9 @@ outputs:
   scanned:
     description: '"true" when the scan was needed and started, "false" when scan-paths skipped it, a failed scan fails the action anyway'
     value: ${{ steps.scope.outputs.scan }}
+  promoted:
+    description: Newline separated tags added to the image by promote-tags, empty when none was
+    value: ${{ steps.promote.outputs.promoted }}
 runs:
   using: composite
   steps:
@@ -66,6 +79,15 @@ runs:
         IMAGE: ${{ inputs.image }}
         IMAGE_REPOSITORY: ${{ inputs.image-repository }}
       run: ${{ github.action_path }}/image.sh
+
+    - name: Resolve the digest of the image to promote
+      id: digest
+      if: inputs.promote-tags != ''
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+      run: ${{ github.action_path }}/promote.sh resolve
 
     - name: Scan the image
       id: scan
@@ -94,3 +116,15 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT"
+
+    # After the report, a clean scan (or no scan: scan-paths skipped it) is the only way to get here, a failed step stops the action
+    - name: Promote the tags
+      id: promote
+      if: ${{ inputs.promote-tags != '' && (steps.scan.outcome == 'success' || steps.scope.outputs.scan == 'false') }}
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        EXPECTED_DIGEST: ${{ steps.digest.outputs.digest }}
+        PROMOTE_TAGS: ${{ inputs.promote-tags }}
+        IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+      run: ${{ github.action_path }}/promote.sh promote
