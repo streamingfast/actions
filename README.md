@@ -150,7 +150,7 @@ Scans container images for critical/high vulnerabilities. The scanner is an impl
 
 | Action | Purpose |
 |---|---|
-| `image-scan/gate` | CI gate: fails on findings (unless advisory), names the CVEs, honors VEX risk acceptances, writes the report to the job summary and, on a pull request, to a comment |
+| `image-scan/gate` | CI gate: fails on findings (unless advisory), names the CVEs, honors VEX risk acceptances, writes the report to the job summary and, on a pull request, a quiet comment (nothing when clean) |
 | `image-scan/weekly` | Scans the latest release and keeps one GitHub issue per CVE |
 
 Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-password`) and run on a `ubuntu-*` runner (`date -d` is GNU only, `image-scan/weekly/issues.sh` falls back to BSD `date -v`).
@@ -185,6 +185,12 @@ CVE-2026-97054  high      stdlib   1.27.3     1.27.4
 `FIXED` is `no fix` when there is no fixed version. The listing is best effort: when that second scan fails the action warns, the report has no table and the outcome is the one of the first scan.
 
 Exit codes of the scanner: findings fail the step right away (no retry), anything else (login, pull, authentication, database fetch) is retried with a linear backoff and then fails. The PR comment is found by a hidden marker containing the image, so a matrix of architectures keeps one comment each, and is best-effort (`continue-on-error`).
+
+The job summary always holds the full report. The PR comment is quieter:
+
+- **clean scan**: nothing is posted. When an earlier (failing) run of the pull request already left the comment, it is updated to one line, `✅ Image scan: no critical/high vulnerabilities in <image> (<short digest>)`, so the pull request shows the problem is resolved. With `vex-location` the line adds `, N accepted via VEX` and a collapsed list of those CVEs, an accepted risk stays visible;
+- **findings** (also in advisory mode, with its banner): the CVE table first, the long scanner report in a collapsed `<details>` block;
+- **skipped scan** (`scan-paths` or `skip-reason`): no comment is added (`skip-reason` still records itself in the summary and the issue).
 
 `scan-paths` diffs `HEAD^1 HEAD`, the checkout of a `pull_request` being the merge commit: check out with `fetch-depth: 2`. The image build stays the caller's and runs either way. The caller keeps its own `if:` for fork and dependabot pull requests, which have no access to secrets.
 

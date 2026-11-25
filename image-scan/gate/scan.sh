@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Scan the image, name the CVEs, apply the VEX exceptions and enforce (or not) the result.
 #
-# Usage: scan.sh <image> <report.md>
+# Usage: scan.sh <image> <report.md> [comment.md]
 #
-# <report.md> is what comment.sh publishes (job summary and pull request comment): the CVE table, the CVEs suppressed by
+# <report.md> is what comment.sh publishes in the job summary, always in full: the CVE table, the CVEs suppressed by
 # the VEX documents with their justification, then the scanner's own markdown report.
+#
+# [comment.md] is what comment.sh publishes in the pull request comment, quieter: on findings the same without the scanner
+# report in the open (a collapsed <details> block), on a clean scan one line (with the CVEs accepted via VEX collapsed), which
+# comment.sh only posts to update the comment of an earlier failing run.
 #
 # Runs the scanner up to 3 times: 1. markdown report, exit code (with the VEX documents), 2. on findings, the SARIF report with
 # the same documents to name the CVEs, 3. with vex-location, the SARIF report WITHOUT the documents: what disappeared from the
@@ -20,6 +24,7 @@ set -uo pipefail
 
 image="${1:?image required}"
 report="${2:?report required}"
+comment="${3:-}"
 
 here="$(dirname "${BASH_SOURCE[0]}")"
 scanner="${here}/../lib/scanner.sh"
@@ -126,6 +131,54 @@ fi
   fi
   cat "${work}/scout.md"
 } >"${report}"
+
+if [[ -n "${comment}" ]]; then
+  suppressed_count="$(jq length <<<"${suppressed}")"
+  {
+    if [[ "${rc}" -eq 0 ]]; then
+      severities="$(tr -d ' ' <<<"${IMAGE_SCAN_SEVERITIES:-critical,high}" | tr '[:upper:]' '[:lower:]' | tr ',' '/')"
+      # The scanner's report names the digest, no extra call for it
+      digest="$(grep -m1 -oE 'sha256:[0-9a-f]{64}' "${work}/scout.md" || true)"
+      line="✅ Image scan: no ${severities} vulnerabilities in ${image}"
+      if [[ -n "${digest}" ]]; then line+=" (${digest:7:12})"; fi
+      if [[ "${suppressed_count}" -gt 0 ]]; then line+=", ${suppressed_count} accepted via VEX"; fi
+      echo "${line}"
+      if [[ "${suppressed_count}" -gt 0 ]]; then
+        echo
+        echo "<details><summary>Accepted via VEX (${suppressed_count})</summary>"
+        echo
+        echo "The statements of \`${vex_location}\` mark them not affected. Each one must link its \`risk-accepted\` issue and go away when the fix ships."
+        echo
+        suppressed_markdown "${suppressed}"
+        echo
+        echo "</details>"
+      fi
+    else
+      if [[ "${enforce}" == false ]]; then
+        echo "> [!WARNING]"
+        echo "> Advisory mode (\`enforce: false\`): the vulnerabilities below do not fail the build."
+        echo
+      fi
+      if [[ "$(jq length <<<"${active}")" -gt 0 ]]; then
+        echo "### Vulnerabilities ($(jq length <<<"${active}"))"
+        echo
+        findings_markdown "${active}"
+        echo
+      fi
+      if [[ "${suppressed_count}" -gt 0 ]]; then
+        echo "### Accepted via VEX (${suppressed_count})"
+        echo
+        suppressed_markdown "${suppressed}"
+        echo
+      fi
+      echo "<details><summary>Scanner report</summary>"
+      echo
+      cat "${work}/scout.md"
+      echo
+      echo "</details>"
+    fi
+  } >"${comment}"
+fi
 
 echo "findings=${findings}" >>"${GITHUB_OUTPUT:?}"
 
