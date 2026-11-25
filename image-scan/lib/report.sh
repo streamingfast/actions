@@ -8,8 +8,55 @@
 #
 # Rows are JSON arrays:
 #   findings   [{id, severity, package, installed, fixed}]   severity: critical|high|medium|low|unknown, fixed: "" when none
-#   statements [{id, status, justification, impact, timestamp, author, file}]   OpenVEX statements of vex-location
-#   suppressed [{id, severity, package, installed, fixed, status, justification, impact, timestamp, author}]
+#   statements [{id, status, justification, impact, timestamp, author, file, products}]   OpenVEX statements of vex-location,
+#                                                                                       products: the product ids (purls, names)
+#   suppressed [{id, severity, package, installed, fixed, status, statements: [{justification, impact, timestamp, author, file, scoped}]}]
+#              status is "not_affected" when a statement explains the CVE, "" otherwise. statements are the ones whose products match
+#              the scanned image (scoped true), else the most recent one of the CVE id with scoped false
+
+# jq definitions shared by the renderings of a suppressed row (VEX_JQ_DEFS), and the matching of a statement product to an image.
+# Image and products are compared the way Scout names them: pkg:oci/<repo>?repository_url=<registry> (with or without @sha256:
+# digest and tag qualifier), pkg:docker/[<registry>/]<repo>, or a plain [<registry>/]<repo>[:tag][@digest]. A product without
+# registry matches any registry, one without digest any digest, tags never count.
+read -r -d '' VEX_JQ_DEFS <<'JQ' || true
+def url_decode: gsub("%2[Ff]"; "/") | gsub("%3[Aa]"; ":") | gsub("%40"; "@");
+def norm_registry: if . == "index.docker.io" or . == "registry-1.docker.io" then "docker.io" else . end;
+def split_ref:
+  sub("@.*$"; "") | sub(":[^/:]*$"; "") | index("/") as $i
+  | (if $i == null then {registry: "", repo: .}
+     else .[:$i] as $first
+       | if ($first | test("[.:]")) or $first == "localhost" then {registry: ($first | norm_registry), repo: .[$i + 1:]} else {registry: "", repo: .} end
+     end)
+  | if .registry == "docker.io" then .repo |= sub("^library/"; "") else . end;
+def digest_of: if test("^sha256:") then . else "" end;
+def qualifier($key): (split("?")[1] // "" | (split("#")[0] // "") | split("&") | map(select(startswith($key + "="))) | .[0] // "" | sub("^[^=]*="; ""));
+def image_ref:
+  split("@") as $p
+  | ($p[0] | split_ref | if .registry == "" then .registry = "docker.io" | .repo |= sub("^library/"; "") else . end) + {digest: ($p[1] // "" | digest_of)};
+def product_ref:
+  url_decode as $d
+  | if startswith("pkg:oci/") then
+      ($d | sub("^pkg:oci/"; "")) as $body
+      | ($body | sub("[?#].*$"; "")) as $path
+      | ($path | sub("@.*$"; "")) as $name
+      | ($path | if test("@") then sub("^[^@]*@"; "") | digest_of else "" end) as $digest
+      | ($body | qualifier("repository_url") | sub("^https?://"; "") | sub("/$"; "")) as $registry
+      | if $registry == "" then {registry: "", repo: $name, digest: $digest}
+        else (if $registry == $name or ($registry | endswith("/" + $name)) then $registry else $registry + "/" + $name end | split_ref) + {digest: $digest} end
+    else
+      ($d | sub("^pkg:docker/"; "") | sub("[?#].*$"; "")) as $path
+      | ($path | split_ref) + {digest: ($path | if test("@") then sub("^[^@]*@"; "") | digest_of else "" end)}
+    end;
+def product_matches($image):
+  (try product_ref catch null) as $p
+  | $p != null and $p.repo == $image.repo
+    and ($p.registry == "" or $p.registry == $image.registry)
+    and ($p.digest == "" or $image.digest == "" or $p.digest == $image.digest);
+def statement_text:
+  "\(.justification | if . == "" then "no justification" else . end)\(if .impact == "" then "" else " - " + .impact end) [\(.file)]\(if .scoped then "" else " (statement not scoped to this image)" end)";
+def suppressed_explanation:
+  if (.statements | length) == 0 then "suppressed, not by a vex-location statement" else .statements | map(statement_text) | join(" | ") end;
+JQ
 
 # sarif_findings <report.sarif>: one row per CVE (the rules of the report, plus the rule ids only seen in results)
 sarif_findings() {
@@ -67,20 +114,28 @@ vex_statements() {
             impact: (.impact_statement // .status_notes // ""),
             timestamp: (.timestamp // $docTimestamp),
             author: (.author // $docAuthor),
-            file: $file}]' "${file}" 2>/dev/null || echo '[]'
+            file: $file,
+            products: [.products[]? | if type == "object" then (."@id" // .identifiers.purl // "") else . end | tostring | select(. != "")]}]' "${file}" 2>/dev/null || echo '[]'
   done | jq -sc 'add // []'
 }
 
-# suppressed_findings <all-findings> <active-findings> <statements>: the CVEs reported without the VEX documents and no longer with
-# them, each with its most recent not_affected statement (justification empty when the suppression is not ours to explain)
+# suppressed_findings <all-findings> <active-findings> <statements> [image]: the CVEs reported without the VEX documents and no longer
+# with them, each with the not_affected statements that explain it. With an image these are the statements whose products match it
+# (all of them, several documents may speak about the CVE); when none does, the most recent statement of the CVE id marked not scoped
+# to the image. Without image, the most recent statement of the CVE id.
 suppressed_findings() {
-  jq -nc --argjson all "$1" --argjson active "$2" --argjson statements "$3" '
+  jq -nc --argjson all "$1" --argjson active "$2" --argjson statements "$3" --arg image "${4:-}" "${VEX_JQ_DEFS}"'
     ($active | map(.id)) as $activeIds
+    | (if $image == "" then null else ($image | image_ref) end) as $img
     | $all | map(select(.id as $id | $activeIds | index($id) | not))
     | map(. as $f
-        | (($statements | map(select(.id == $f.id and .status == "not_affected")) | sort_by(.timestamp) | last) // {}) as $s
-        | $f + {status: ($s.status // ""), justification: ($s.justification // ""), impact: ($s.impact // ""),
-                timestamp: ($s.timestamp // ""), author: ($s.author // "")})' 2>/dev/null || echo '[]'
+        | ($statements | map(select(.id == $f.id and .status == "not_affected"))) as $byId
+        | (if $img == null then []
+           else $byId | map(select(.products | any(.[]; product_matches($img)))) | map(. + {scoped: true}) | sort_by([.file, .timestamp]) end) as $scoped
+        | (if ($scoped | length) > 0 then $scoped
+           else ($byId | sort_by(.timestamp) | last // null | if . == null then [] else [. + {scoped: ($img == null)}] end) end) as $chosen
+        | $f + {status: (if ($chosen | length) > 0 then "not_affected" else "" end),
+                statements: ($chosen | map({justification, impact, timestamp, author, file: (.file | split("/") | last), scoped}))})' 2>/dev/null || echo '[]'
 }
 
 # stale_statements <all-findings> <statements>: not_affected statements matching no finding of the image (the fix shipped?)
@@ -114,16 +169,19 @@ findings_markdown() {
 
 # suppressed_text <suppressed>: one line per CVE for the log
 suppressed_text() {
-  jq -r '.[] | "\(.id) (\(.severity)) \(.package) \(.installed): \(if .status == "" then "suppressed, not by a vex-location statement" else "\(.justification | if . == "" then "no justification" else . end)\(if .impact == "" then "" else " - " + .impact end)" end)"' <<<"$1"
+  jq -r "${VEX_JQ_DEFS}"'.[] | "\(.id) (\(.severity)) \(.package) \(.installed): \(suppressed_explanation)"' <<<"$1"
 }
 
 # suppressed_markdown <suppressed> [limit]
 suppressed_markdown() {
-  jq -r --argjson limit "${2:-100}" '
+  jq -r --argjson limit "${2:-100}" "${VEX_JQ_DEFS}"'
     def cell($max): tostring | gsub("[|]"; "\\|") | gsub("[\r\n]+"; " ") | if length > $max then .[:$max] + "…" else . end;
+    def per_statement(f): if (.statements | length) == 0 then "" else .statements | map(f) | join("<br>") end;
     "| CVE | Severity | Package | Installed | Justification | Author | Statement date |", "|---|---|---|---|---|---|---|",
     (.[:$limit][] | "| \(.id | cell(40)) | \(.severity) | `\(.package | cell(80))` | \(.installed | cell(40)) | \(
         if .status == "" then "_suppressed, not by a statement of vex-location_"
-        else ([(.justification | select(. != "")), (.impact | select(. != "") | cell(300))] | join(": ") | if . == "" then "_none_" else . end) end) | \(.author | cell(80)) | \(.timestamp | cell(40)) |"),
+        else per_statement(
+          ([(.justification | select(. != "")), (.impact | select(. != "") | cell(300))] | join(": ") | if . == "" then "_none_" else . end)
+          + " (`\(.file | cell(60))`)" + (if .scoped then "" else " _(statement not scoped to this image)_" end)) end) | \(per_statement(.author | cell(80))) | \(per_statement(.timestamp | cell(40))) |"),
     (if length > $limit then "", "… and \(length - $limit) more" else empty end)' <<<"$1"
 }

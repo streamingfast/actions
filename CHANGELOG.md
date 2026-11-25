@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.3
+
+### Fixed
+
+- Fix the **Suppressed by VEX** report of `image-scan/gate` and `image-scan/weekly` (log, job summary, PR comment, weekly summary) showing the wrong justification when several VEX documents speak about the same CVE: the statement was picked by CVE id only, across all documents. It is now picked among the statements whose `products` match the scanned image (`pkg:oci/<repo>?repository_url=<registry>` with or without `@sha256:` digest and `tag`, `pkg:docker/<registry>/<repo>`, plain repository names), all of them when several match, each with the name of its VEX file. A CVE suppressed only by a statement of another image falls back to the CVE id match, marked `(statement not scoped to this image)`. What Scout suppresses is unchanged, inputs, outputs and exit codes too
+- Fix the VEX example of the README, `pkg:docker/...` products never match an image named by Scout (`pkg:oci/<repo>?repository_url=<registry>`): add the `ghcr.io` and `gcr.io` forms and a "VEX loaded but nothing suppressed?" troubleshooting note
+
 ## v1.4.2
 
 ### Fixed
