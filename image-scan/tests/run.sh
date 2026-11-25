@@ -289,6 +289,35 @@ check "comment: nothing without a report" test ! -s "${FAKE_DIR}/gh.log"
 GITHUB_EVENT_NAME=push "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md"
 check "comment: no PR comment on push" test ! -s "${FAKE_DIR}/gh.log"
 
+# Quiet on a clean scan: nothing to post, a line to update an earlier report
+setup
+export PR_NUMBER=7
+echo "full report" >"${FAKE_DIR}/report.md"
+echo "✅ Image scan: no critical/high vulnerabilities in img" >"${FAKE_DIR}/comment.md"
+echo '[]' >"${FAKE_DIR}/comments.json"
+FINDINGS=false GITHUB_EVENT_NAME=pull_request "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md" "${FAKE_DIR}/comment.md"
+check "comment clean: exits 0" test $? -eq 0
+check "comment clean: no comment without an existing one" not_logged "-X POST\|-X PATCH" gh.log
+check "comment clean: the job summary keeps the full report" grep -q "full report" "${GITHUB_STEP_SUMMARY}"
+
+printf '%s\n' '[{"id": 55, "body": "<!-- image-scan:img -->\nold"}, {"id": 56, "body": "<!-- image-scan:other -->\nold"}]' >"${FAKE_DIR}/comments.json"
+FINDINGS=false GITHUB_EVENT_NAME=pull_request "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md" "${FAKE_DIR}/comment.md"
+check "comment clean: updates the comment of an earlier failing run" logged "api -X PATCH repos/o/r/issues/comments/55" gh.log
+check "comment clean: ... with the one line" logged "no critical/high vulnerabilities in img" gh.log
+check "comment clean: ... not the full report" not_logged "full report" gh.log
+check "comment clean: the other image is left alone" not_logged "comments/56" gh.log
+
+: >"${FAKE_DIR}/gh.log"
+echo '[]' >"${FAKE_DIR}/comments.json"
+FINDINGS=true GITHUB_EVENT_NAME=pull_request "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md" "${FAKE_DIR}/comment.md"
+check "comment findings: posted when missing" logged "api -X POST repos/o/r/issues/7/comments" gh.log
+check "comment findings: ... from the comment file" logged "no critical/high" gh.log
+
+: >"${FAKE_DIR}/gh.log"
+{ echo "<details><summary>Scanner report</summary>"; echo; head -c 70000 /dev/zero | tr '\0' a; echo; echo "</details>"; } >"${FAKE_DIR}/cut.md"
+FINDINGS=true GITHUB_EVENT_NAME=pull_request "${root}/gate/comment.sh" img "${FAKE_DIR}/report.md" "${FAKE_DIR}/cut.md"
+check "comment findings: a truncated report closes its collapsed block" grep -q "</details>$" "${FAKE_DIR}/gh.log"
+
 # ---------------------------------------------------------------- scanner.sh: VEX documents and the findings level
 fx="${here}/fixtures"
 setup
@@ -693,3 +722,49 @@ check "slack: no message file when nothing was opened" test ! -e "${FAKE_DIR}/sl
 echo
 echo "${cases} checks, ${failures} failed"
 exit $((failures > 0 ? 1 : 0))
+
+# ---------------------------------------------------------------- gate/scan.sh: the pull request comment body
+comment_has() { grep -q -- "$1" "${FAKE_DIR}/comment.md"; }
+digest=sha256:d562353f9ef09d4eb64d75e0e5595268d2d64b21b180d6d6281c2bbcbd170e99
+gate_scan_comment() { : >"${GITHUB_OUTPUT}"; env IMAGE_SCAN_RETRIES=1 "$@" "${root}/gate/scan.sh" "${img}" "${FAKE_DIR}/report.md" "${FAKE_DIR}/comment.md" >"${FAKE_DIR}/out.txt" 2>&1; }
+
+setup
+gate_scan_comment
+check "gate comment: clean is one line" test "$(cat "${FAKE_DIR}/comment.md")" = "✅ Image scan: no critical/high vulnerabilities in ${img}"
+check "gate comment: ... the job summary report stays the scanner's" test "$(cat "${FAKE_DIR}/report.md")" = "no findings"
+
+setup
+echo "digest	${digest}" >"${FAKE_DIR}/${key}.md"
+gate_scan_comment
+check "gate comment: clean names the short digest when the report has it" test "$(cat "${FAKE_DIR}/comment.md")" = "✅ Image scan: no critical/high vulnerabilities in ${img} (d562353f9ef0)"
+
+setup
+gate_scan_comment IMAGE_SCAN_SEVERITIES="critical, high,medium"
+check "gate comment: clean follows the severities" comment_has "no critical/high/medium vulnerabilities"
+
+setup
+echo 0 >"${FAKE_DIR}/${key}.rc"
+echo 2 >"${FAKE_DIR}/${key}.vex.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.vex.sarif"
+gate_scan_comment IMAGE_SCAN_VEX_LOCATION="${fx}/vex"
+check "gate comment: clean with VEX counts the accepted CVEs" test "$(head -n1 "${FAKE_DIR}/comment.md")" = "✅ Image scan: no critical/high vulnerabilities in ${img}, 5 accepted via VEX"
+check "gate comment: ... and lists them collapsed" comment_has "^<details><summary>Accepted via VEX (5)</summary>$"
+check "gate comment: ... closed" comment_has "^</details>$"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan_comment
+check "gate comment findings: the CVE table comes first" test "$(head -n1 "${FAKE_DIR}/comment.md")" = "### Vulnerabilities (5)"
+check "gate comment findings: the scanner report is collapsed" comment_has "^<details><summary>Scanner report</summary>$"
+check "gate comment findings: ... after the table" test "$(grep -n '^| CVE' "${FAKE_DIR}/comment.md" | head -n1 | cut -d: -f1)" -lt "$(grep -n '<details>' "${FAKE_DIR}/comment.md" | head -n1 | cut -d: -f1)"
+check "gate comment findings: ... holding the report" comment_has "^# findings in ${img}$"
+check "gate comment findings: ... closed" comment_has "^</details>$"
+check "gate comment findings: the job summary report is not collapsed" not report_has "<details>"
+
+setup
+echo 2 >"${FAKE_DIR}/${key}.rc"
+cp "${fx}/table.sarif" "${FAKE_DIR}/${key}.sarif"
+gate_scan_comment IMAGE_SCAN_ENFORCE=false
+check "gate comment advisory: keeps the banner first" test "$(head -n1 "${FAKE_DIR}/comment.md")" = "> [!WARNING]"
+check "gate comment advisory: ... and the collapsed report" comment_has "<details><summary>Scanner report</summary>"

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.1
+
+### Changed
+
+- Quiet the pull request comment of `image-scan/gate`. A clean scan posts nothing, and when an earlier failing run already left the comment it is updated to one line, `✅ Image scan: no critical/high vulnerabilities in <image> (<short digest>)`, with `, N accepted via VEX` and a collapsed list of the CVEs suppressed by `vex-location`. On findings (also in advisory mode) the CVE table comes first and the scanner report is in a collapsed `<details>` block. The job summary keeps the full report in every case, and a skipped scan still adds no comment
+
 ## v1.4.0
 
 ### Added

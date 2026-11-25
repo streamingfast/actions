@@ -160,8 +160,10 @@ runs:
         IMAGE_SCAN_ENFORCE: ${{ inputs.enforce }}
       run: |
         report="$(mktemp "${RUNNER_TEMP}/image-scan-XXXXXX.md")"
+        comment="${report%.md}-comment.md"
         echo "report=${report}" >> "$GITHUB_OUTPUT"
-        ${{ github.action_path }}/scan.sh "$IMAGE" "$report"
+        echo "comment=${comment}" >> "$GITHUB_OUTPUT"
+        ${{ github.action_path }}/scan.sh "$IMAGE" "$report" "$comment"
 
     - name: Publish the scan report
       if: ${{ !cancelled() && (steps.scan.outcome == 'success' || steps.scan.outcome == 'failure') }}
@@ -170,9 +172,11 @@ runs:
       env:
         IMAGE: ${{ steps.image.outputs.image }}
         REPORT: ${{ steps.scan.outputs.report }}
+        COMMENT: ${{ steps.scan.outputs.comment }}
+        FINDINGS: ${{ steps.scan.outputs.findings }}
         GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT"
+      run: ${{ github.action_path }}/comment.sh "$IMAGE" "$REPORT" "$COMMENT"
 
     # After the report, a clean scan (or no scan: scan-paths or skip-reason skipped it) is the only way to get here, a failed step stops the action
     - name: Promote the tags
