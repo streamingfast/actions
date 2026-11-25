@@ -32,7 +32,18 @@ What the shim passes to the container: `IMAGE_SCAN_*`, `GITHUB_*` and `RUNNER_*`
 4. The workflow checks that `run.sh` pins a built image whose revision label has the same `Dockerfile`, `go.*`, `cmd` and `internal` as the tag, then adds the tags `v1.x.y` and `v1` to the image by digest (no rebuild, an existing version tag is never overwritten).
 5. Move the `v1` git tag: `git tag -f v1 && git push origin v1 --force`. Every caller of `@v1` runs the new release from then on: try it from one repository with `@v1.x.y` before moving `v1`.
 
-Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKERHUB_USER` and `DOCKERHUB_PASSWORD` secrets for the self-scan, and the `ghcr.io/streamingfast/image-scan` package must be readable by the callers (public, or internal and shared with the organisation repositories).
+Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKERHUB_USER` and `DOCKERHUB_PASSWORD` secrets for the self-scan (organisation secrets).
+
+## Private package
+
+The Docker Scout CLI is redistributed in the image under Docker's licence (below), so `ghcr.io/streamingfast/image-scan` is a **private** package. The first push creates it linked to this repository (the `org.opencontainers.image.source` label of the image and annotation of its index), private by default for the organisation.
+
+Two things cannot be done through the REST API (its package endpoints list, read, delete and restore, they neither change the visibility nor the access of a package), so they are done once in *Packages → image-scan → Package settings* of the organisation, after the first push:
+
+1. check that *Danger Zone → Change visibility* says **Private** (`internal` is a GitHub Enterprise Cloud feature, the organisation is on the Team plan);
+2. *Manage Actions access → Add repository*, role **Read**, for every repository whose workflows use `image-scan/gate` or `image-scan/weekly`: their `GITHUB_TOKEN` pulls the image. When the section is not shown, turn *Inherit access from source repository* off first. A new caller repository needs the same, a pull refused with `denied` / `unauthorized` is always this.
+
+The pull happens in `run.sh` with the `pull-token` input (default `github.token`, user `github.actor`) in a Docker config of its own, so the job needs `permissions: packages: read` (`write` includes it), and the token does not reach the container. The release job of this workflow only uses the token of this repository.
 
 ## One release line
 
@@ -40,4 +51,4 @@ The tags of the repository cover every action (`sfreleaser/*` too), and image-sc
 
 ## The Docker Scout CLI
 
-`docker/scout-cli` is released under the [Docker Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/), not an open source licence, and the image republishes its binary. Bump it by hand in the `Dockerfile` (tag and digest).
+`docker/scout-cli` is released under the [Docker Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/), not an open source licence, and the image republishes its binary, which is why the package stays private. Bump it by hand in the `Dockerfile` (tag and digest).

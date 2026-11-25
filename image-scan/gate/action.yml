@@ -84,6 +84,10 @@ inputs:
     description: Token posting the pull request comment (needs pull-requests write) and the issue of skip-reason (needs issues write). The comment is authored by the token owner, pass a bot user token to post as that user
     required: false
     default: ${{ github.token }}
+  pull-token:
+    description: Token pulling the image-scan container image (a private package of ghcr.io) with the user of the workflow actor, needs the packages read permission, and the package must grant the repository read access. Empty pulls without login
+    required: false
+    default: ${{ github.token }}
 outputs:
   scanned:
     description: '"true" when the scan was needed and started, "false" when scan-paths or skip-reason skipped it, a failed scan fails the action anyway'
@@ -120,5 +124,6 @@ runs:
         IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
         IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
         IMAGE_SCAN_ENFORCE: ${{ inputs.enforce }}
+        IMAGE_SCAN_PULL_TOKEN: ${{ inputs.pull-token }}
         IMAGE_SCAN_PR_NUMBER: ${{ github.event.pull_request.number }}
       run: ${{ github.action_path }}/../run.sh gate
