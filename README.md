@@ -167,9 +167,10 @@ Both need a Docker Hub account for the scanner (`dockerhub-user`, `dockerhub-pas
 | `retries` | `3` | Attempts for infrastructure failures, findings fail at once |
 | `scan-paths` | empty | Newline separated extended regexes (anchor with `^`). On a `pull_request` the scan is skipped unless a file changed by the PR matches one. Empty always scans |
 | `promote-tags` | empty | Newline or comma separated full image refs added to the image once the scan is clean, see [Blocking a single-push release](#blocking-a-single-push-release) |
-| `github-token` | `github.token` | Posts the PR comment (shown as `github-actions[bot]`), needs `pull-requests: write`. Pass the bot user's token to post as that user |
+| `skip-reason` | empty | Audited emergency bypass of the scan, only honored on `workflow_dispatch`, see [Emergency bypass](#emergency-bypass) |
+| `github-token` | `github.token` | Posts the PR comment (shown as `github-actions[bot]`, needs `pull-requests: write`) and the issue of a skipped scan (needs `issues: write`). Pass the bot user's token to post as that user |
 
-Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` skipped it (a failing scan fails the action). Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
+Output `scanned` is `true` when the scan was needed and `false` when `scan-paths` or `skip-reason` skipped it (a failing scan fails the action). Output `skipped` is `true` when `skip-reason` bypassed the scan, `false` otherwise. Output `promoted` is the newline separated list of tags added by `promote-tags`, empty when none was.
 
 Exit codes of the scanner: findings fail the step right away (no retry), anything else (login, pull, authentication, database fetch) is retried with a linear backoff and then fails. The PR comment is found by a hidden marker containing the image, so a matrix of architectures keeps one comment each, and is best-effort (`continue-on-error`).
 
@@ -261,6 +262,45 @@ When `scan-paths` skips the scan (only on a pull request) the tags are promoted 
 ```
 
 Two `docker/metadata-action` steps produce the two lists, one with only `type=sha` for `build-push-action`, the other with all the tags for `promote-tags` (a sha tag listed in both is skipped by the gate as it is the scanned image). Filtering one list instead works too, `image` must be a single tag. The commit sha tag stays in the registry whatever the scan says, it is the only tag that exists for an image that failed.
+
+#### Emergency bypass
+
+A release can be urgent (a hard-fork upgrade with a deadline) while the gate fails on a CVE in upstream code that cannot be fixed in time, or the scanner is down. `skip-reason` is a documented, auditable exception, not a silent skip. When it is not blank **and** the run is a `workflow_dispatch`:
+
+- the scan does not run, `promote-tags` still does (the digest is resolved first, as usual) and the outputs are `skipped=true`, `scanned=false`;
+- a `::warning::` and a job summary section record the image and digest, `github.actor`, the reason, the run URL and the time;
+- a GitHub issue titled `Image scan skipped: <image>@<short digest>`, labelled `security` and `image-scan-skipped`, holds the same details and asks to re-scan the image and close the issue. The same image and digest skipped again comments the open issue instead. It needs `issues: write` on `github-token`: when the issue cannot be created the action warns and goes on, the release is not failed and the summary is still recorded.
+
+On any other event (`push`, `pull_request`, `schedule`, ...) `skip-reason` is **ignored**, with a warning, and the image is scanned normally: a misconfigured workflow cannot bypass the gate. Without `skip-reason` nothing changes.
+
+```yaml
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      skip-scan-reason:
+        description: Emergency only, skip the image scan. The reason is recorded in a GitHub issue
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+  issues: write # the issue recording a skipped scan
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      # ... build and push the image ...
+      - uses: streamingfast/actions/image-scan/gate@v1
+        with:
+          dockerhub-user: ${{ secrets.DOCKER_SCOUT_USER }}
+          dockerhub-password: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
+          skip-reason: ${{ inputs.skip-scan-reason }}
+```
+
+Anyone who can dispatch the workflow (write access to the repository) can use the bypass. To require an approval, run the job in a protected GitHub environment (`environment:` on the job, with required reviewers): the dispatch then waits for a reviewer, whose approval is part of the audit trail. The issue is the record to follow up on, close it only once the image is scanned.
 
 ### `image-scan/weekly`
 

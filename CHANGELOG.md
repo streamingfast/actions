@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## v1.3.0
+
+### Added
+
+- Add the optional `skip-reason` input and `skipped` output to `image-scan/gate`, an audited emergency bypass: on a `workflow_dispatch` run a non-blank reason skips the scan (`promote-tags` still applies) and is recorded in a warning, the job summary and a GitHub issue (labels `security` and `image-scan-skipped`, needs `issues: write`, a failure to open it only warns) with the image, digest, actor, reason, run URL and time. On any other event the reason is ignored, with a warning, and the scan runs
+
+### Changed
+
+- Change the `scanned` output of `image-scan/gate` to `false` when `skip-reason` skipped the scan
+
+## v1.2.0
 
 ### Added
 

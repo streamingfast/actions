@@ -195,6 +195,59 @@ setup
 IMAGE_SCAN_RETRIES=abc promote "ghcr.io/o/r:latest"
 check "promote: invalid retries are rejected" test $? -eq 1
 
+# ---------------------------------------------------------------- gate/skip.sh
+decide() { : >"${GITHUB_OUTPUT}"; env "$@" "${root}/gate/skip.sh" decide 2>&1; sed -n 's/^skip=//p' "${GITHUB_OUTPUT}"; }
+check "skip: workflow_dispatch with a reason skips" test "$(decide SKIP_REASON=outage GITHUB_EVENT_NAME=workflow_dispatch | tail -n1)" = true
+check "skip: no reason scans" test "$(decide SKIP_REASON= GITHUB_EVENT_NAME=workflow_dispatch | tail -n1)" = false
+check "skip: blank reason scans" test "$(decide "SKIP_REASON=  " GITHUB_EVENT_NAME=workflow_dispatch | tail -n1)" = false
+check "skip: no reason does not warn" test "$(decide SKIP_REASON= GITHUB_EVENT_NAME=push | wc -l)" -eq 1
+for event in push pull_request schedule; do
+  out="$(decide SKIP_REASON=outage GITHUB_EVENT_NAME=${event})"
+  check "skip: ${event} ignores the reason" test "$(tail -n1 <<<"${out}")" = false
+  check "skip: ${event} warns" grep -q "^::warning::skip-reason is ignored on a ${event} event" <<<"${out}"
+done
+
+digest_c="sha256:$(printf 'c%.0s' {1..64})"
+record() { env IMAGE=ghcr.io/o/r:0123456 DIGEST="${digest_c}" SKIP_REASON=$'upstream CVE\nhard fork at 12:00' GITHUB_ACTOR=alice GITHUB_RUN_ID=42 GITHUB_SERVER_URL=https://github.com "$@" "${root}/gate/skip.sh" record 2>&1; }
+
+setup
+out="$(record)"
+check "skip record: exits 0" test $? -eq 0
+check "skip record: warning has image, digest, actor, reason, run" grep -q "^::warning::Image scan SKIPPED for ghcr.io/o/r:0123456@${digest_c} by alice: upstream CVE hard fork at 12:00 (https://github.com/o/r/actions/runs/42)$" <<<"${out}"
+check "skip record: warning is a single line" test "$(grep -c '' <<<"$(grep '^::warning::Image scan SKIPPED' <<<"${out}")")" -eq 1
+check "skip record: summary has the details" grep -q "alice" "${GITHUB_STEP_SUMMARY}"
+check "skip record: summary has the digest" grep -q "${digest_c}" "${GITHUB_STEP_SUMMARY}"
+check "skip record: summary has the reason" grep -q "hard fork at 12:00" "${GITHUB_STEP_SUMMARY}"
+check "skip record: summary has the run URL" grep -q "https://github.com/o/r/actions/runs/42" "${GITHUB_STEP_SUMMARY}"
+check "skip record: summary has the time" grep -qE "20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z" "${GITHUB_STEP_SUMMARY}"
+check "skip record: opens an issue titled with the short digest" logged "issue create .*--title Image scan skipped: ghcr.io/o/r:0123456@cccccccccccc " gh.log
+check "skip record: issue labels" logged "--label security --label image-scan-skipped" gh.log
+check "skip record: issue has the marker" logged "<!-- image-scan-skipped:ghcr.io/o/r:0123456@${digest_c} -->" gh.log
+check "skip record: issue asks to re-scan and close" logged "re-run the scan.*then close this issue" gh.log
+check "skip record: issue has the actor and reason" logged "Skipped by:\*\* @alice" gh.log
+check "skip record: labels are created best-effort" logged "label create image-scan-skipped" gh.log
+
+setup
+echo "[{\"number\": 7, \"body\": \"<!-- image-scan-skipped:ghcr.io/o/r:0123456@${digest_c} -->\"}, {\"number\": 8, \"body\": \"<!-- image-scan-skipped:other@${digest_c} -->\"}]" >"${FAKE_DIR}/issues.json"
+record >/dev/null
+check "skip record: an open issue of the same image@digest is commented" logged "issue comment 7 " gh.log
+check "skip record: ... and no other is opened" not_logged "issue create" gh.log
+
+setup
+FAKE_GH_FAIL="issue create" record >"${FAKE_DIR}/out.txt"
+check "skip record: issue failure still exits 0" test $? -eq 0
+check "skip record: issue failure warns" grep -q "^::warning::Cannot record the skipped scan as a GitHub issue" "${FAKE_DIR}/out.txt"
+check "skip record: issue failure keeps the summary" grep -q alice "${GITHUB_STEP_SUMMARY}"
+
+setup
+FAKE_GH_FAIL="issue list" record >"${FAKE_DIR}/out.txt"
+check "skip record: list failure exits 0 and warns" grep -q "^::warning::Cannot record the skipped scan" "${FAKE_DIR}/out.txt"
+
+setup
+record DIGEST= >"${FAKE_DIR}/out.txt"
+check "skip record: unresolved digest is recorded" grep -q "@unresolved" "${FAKE_DIR}/out.txt"
+check "skip record: unresolved digest titles the issue" logged "--title Image scan skipped: ghcr.io/o/r:0123456@unresolved " gh.log
+
 # ---------------------------------------------------------------- gate/comment.sh
 setup
 echo "report body" >"${FAKE_DIR}/report.md"
