@@ -1,5 +1,5 @@
 name: image-scan gate
-description: Fail the build when a container image has critical/high vulnerabilities, report to the job summary and the pull request
+description: Fail the build when a container image has critical/high vulnerabilities (with per-CVE VEX exceptions and an advisory mode), report to the job summary and the pull request
 inputs:
   image:
     description: |
@@ -60,6 +60,26 @@ inputs:
       workflow can bypass the gate, protect the workflow with a GitHub environment requiring approval
     required: false
     default: ""
+  vex-location:
+    description: |
+      File or directory (relative to the workspace, so the caller must check out the repository) of OpenVEX documents, like .github/vex/,
+      a per-CVE risk acceptance. A statement with status not_affected suppresses its CVE: it no longer fails the scan, and is listed under
+      "Suppressed by VEX" with its justification in the log, the job summary and the pull request comment. Other statuses (including
+      under_investigation) suppress nothing. Mounted read-only into the scanner. Every statement must link a risk-accepted issue
+      and be removed when the fix ships. Empty applies no document
+    required: false
+    default: ""
+  vex-author:
+    description: Regular expression of the VEX statement authors to accept (docker scout --vex-author, whose own default only accepts docker.com authors). Applies with vex-location
+    required: false
+    default: ".*"
+  enforce:
+    description: |
+      "true" fails the build on findings. "false" is advisory mode, for images whose dependencies cannot be fixed (an upstream fork):
+      the scan and the report run as usual (summary, CVE table, pull request comment) but findings are warnings, the build does not fail,
+      promote-tags always applies and the findings output tells the caller. An infrastructure failure of the scanner still fails
+    required: false
+    default: "true"
   github-token:
     description: Token posting the pull request comment (needs pull-requests write) and the issue of skip-reason (needs issues write). The comment is authored by the token owner, pass a bot user token to post as that user
     required: false
@@ -68,6 +88,9 @@ outputs:
   scanned:
     description: '"true" when the scan was needed and started, "false" when scan-paths or skip-reason skipped it, a failed scan fails the action anyway'
     value: ${{ steps.scope.outputs.scan == 'true' && steps.skip.outputs.skip != 'true' }}
+  findings:
+    description: '"true" when the scan found vulnerabilities (not counting those suppressed by vex-location), which only reaches the caller with enforce: false (the action fails otherwise), "false" otherwise, also when the scan did not run'
+    value: ${{ steps.scan.outputs.findings || 'false' }}
   skipped:
     description: '"true" when skip-reason bypassed the scan (workflow_dispatch only), "false" otherwise'
     value: ${{ steps.skip.outputs.skip }}
@@ -132,10 +155,13 @@ runs:
         IMAGE_SCAN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
         IMAGE_SCAN_SEVERITIES: ${{ inputs.severities }}
         IMAGE_SCAN_RETRIES: ${{ inputs.retries }}
+        IMAGE_SCAN_VEX_LOCATION: ${{ inputs.vex-location }}
+        IMAGE_SCAN_VEX_AUTHOR: ${{ inputs.vex-author }}
+        IMAGE_SCAN_ENFORCE: ${{ inputs.enforce }}
       run: |
         report="$(mktemp "${RUNNER_TEMP}/image-scan-XXXXXX.md")"
         echo "report=${report}" >> "$GITHUB_OUTPUT"
-        ${{ github.action_path }}/../lib/scanner.sh "$IMAGE" "$report"
+        ${{ github.action_path }}/scan.sh "$IMAGE" "$report"
 
     - name: Publish the scan report
       if: ${{ !cancelled() && (steps.scan.outcome == 'success' || steps.scan.outcome == 'failure') }}

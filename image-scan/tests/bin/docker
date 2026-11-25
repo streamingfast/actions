@@ -3,6 +3,11 @@
 #   login-fails     number of `docker login` calls still failing
 #   <image>.rc      exit code of `docker run ... <image>` (default 0), <image> with / and : replaced by _
 #   <image>.sarif   file written to stdout when the format is sarif
+#   <image>.vex.rc / <image>.vex.sarif   same, used instead when the scan has --vex-location (the documents suppress CVEs),
+#                   the plain files when absent
+#   <image>.md      markdown written to stdout when the format is markdown and the scan has findings (default: a one line title)
+#   <image>.badsarif  makes the sarif pass of the scan (without --vex-location) fail with this exit code (infra failure)
+#   vex-seen        listing of the file mounted at /vex, written by the first scan with --vex-location
 #   docker.log      one line per call
 echo "$*" >>"${FAKE_DIR}/docker.log"
 case "$1" in
@@ -33,17 +38,30 @@ case "$1" in
   run)
     echo "hub_user=${DOCKER_SCOUT_HUB_USER} registry_user=${DOCKER_SCOUT_REGISTRY_USER} docker_config=${DOCKER_CONFIG}" >>"${FAKE_DIR}/docker.log"
     args=("$@")
-    format="" image="${args[-1]}"
+    format="" image="${args[-1]}" vex=""
     for ((i = 0; i < ${#args[@]}; i++)); do
       case "${args[i]}" in
         --output) echo "fake docker: --output must not be used" >&2; exit 64 ;;
         --format) format="${args[i + 1]}" ;;
+        --vex-location) vex="${args[i + 1]}" ;;
+        -v)
+          # -v <host>:/vex...:ro, remember what the scanner would see
+          host="${args[i + 1]%%:*}"
+          { ls -R "${host}" 2>/dev/null || ls "${host}"; } >"${FAKE_DIR}/vex-seen" 2>/dev/null
+          ;;
       esac
     done
     key="${image//[\/:]/_}"
-    rc="$(cat "${FAKE_DIR}/${key}.rc" 2>/dev/null || echo 0)"
+    suffix=""
+    if [[ -n "${vex}" ]]; then suffix=".vex"; fi
+    rc="$(cat "${FAKE_DIR}/${key}${suffix}.rc" 2>/dev/null || cat "${FAKE_DIR}/${key}.rc" 2>/dev/null || echo 0)"
+    if [[ -z "${vex}" && "${format}" == sarif && -s "${FAKE_DIR}/${key}.badsarif" ]]; then rc="$(cat "${FAKE_DIR}/${key}.badsarif")"; fi
     if [[ "${rc}" == 2 ]]; then
-      if [[ "${format}" == sarif ]]; then cat "${FAKE_DIR}/${key}.sarif"; else echo "# findings in ${image}"; fi
+      sarif="${FAKE_DIR}/${key}${suffix}.sarif"
+      [[ -f "${sarif}" ]] || sarif="${FAKE_DIR}/${key}.sarif"
+      md="${FAKE_DIR}/${key}${suffix}.md"
+      [[ -f "${md}" ]] || md="${FAKE_DIR}/${key}.md"
+      if [[ "${format}" == sarif ]]; then cat "${sarif}"; elif [[ -f "${md}" ]]; then cat "${md}"; else echo "# findings in ${image}"; fi
     elif [[ "${rc}" == 0 ]]; then
       echo "no findings"
     fi

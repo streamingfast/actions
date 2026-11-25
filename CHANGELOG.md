@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0
+
+### Added
+
+- Add the optional `vex-location` and `vex-author` inputs to `image-scan/gate` and `image-scan/weekly`, a per-CVE risk acceptance: a file or directory of OpenVEX documents of the caller repository is mounted read-only into the scanner and passed to `docker scout cves --vex-location`, so a `not_affected` statement suppresses its CVE (Scout ignores the other statuses, the gate warns about them, and about statements matching no finding any more). `vex-author` (default `.*`) replaces Scout's default that only accepts `docker.com` authors. The gate lists the suppressed CVEs with the justification, author and date of the statement in the log, the job summary and the PR comment, from a second scan without the documents. The weekly action opens no issue for a suppressed CVE and lists them in its summary
+- Add the CVE table to `image-scan/gate`: on findings the log, the job summary and the PR comment name each CVE with its severity, package, installed version and fixed version (`no fix` when none) before the scanner report, read from a second scan in SARIF (best effort, a failure only warns)
+- Add the optional `enforce` input (default `true`) and the `findings` output to `image-scan/gate`. With `enforce: false` (advisory mode) the scan and the report run as usual but findings are `::warning::`, the action exits 0 and `promote-tags` applies, `findings` is `true` for the caller to alert on. A scanner that cannot run still fails
+
 ## v1.3.0
 
 ### Added

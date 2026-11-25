@@ -1,0 +1,28 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/streamingfast/firehose-stellar/.github/vex/openvex.json",
+  "author": "SF Security <security@streamingfast.io>",
+  "timestamp": "2026-11-24T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {"name": "CVE-2026-97054"},
+      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "Risk accepted in https://github.com/streamingfast/firehose-stellar/issues/57, fixed in Go 1.27.4, remove once firecore is rebuilt with it",
+      "timestamp": "2026-11-24T10:00:00Z"
+    },
+    {
+      "vulnerability": {"name": "CVE-2025-2222"},
+      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "status": "under_investigation"
+    },
+    {
+      "vulnerability": "CVE-2025-9999",
+      "products": [{"@id": "pkg:docker/streamingfast/firehose-stellar"}],
+      "status": "not_affected",
+      "justification": "component_not_present"
+    }
+  ]
+}

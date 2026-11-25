@@ -14,6 +14,12 @@
 #   IMAGE_SCAN_REGISTRY_USER / IMAGE_SCAN_REGISTRY_PASSWORD     credentials to read <image> from its registry (optional)
 #   IMAGE_SCAN_SEVERITIES (default critical,high)
 #   IMAGE_SCAN_RETRIES (default 3) / IMAGE_SCAN_BACKOFF (default 15, seconds, multiplied by the attempt number)
+#   IMAGE_SCAN_VEX_LOCATION   file or directory of OpenVEX documents, mounted read-only into the scanner container and passed to
+#                             `--vex-location`. Only `not_affected` statements suppress a CVE (Scout ignores the other statuses).
+#                             Relative to the current directory. Suppressed CVEs count neither in the report nor in the exit code
+#   IMAGE_SCAN_VEX_AUTHOR     `--vex-author`, which VEX statement authors to accept (default .*, Scout's own default only accepts
+#                             <.*@docker.com>, so no statement of ours would ever apply)
+#   IMAGE_SCAN_FINDINGS_LEVEL workflow command level of the message printed on findings: error (default), warning, notice or debug
 #
 # Exit codes ('docker scout cves --exit-code': 0 = clean, 2 = vulnerabilities, anything else = error):
 #   0   no finding at the requested severities
@@ -32,6 +38,12 @@ severities="${IMAGE_SCAN_SEVERITIES:-critical,high}"
 retries="${IMAGE_SCAN_RETRIES:-3}"
 backoff="${IMAGE_SCAN_BACKOFF:-15}"
 
+level="${IMAGE_SCAN_FINDINGS_LEVEL:-error}"
+case "${level}" in
+  error | warning | notice | debug) ;;
+  *) echo "::error::IMAGE_SCAN_FINDINGS_LEVEL must be error, warning, notice or debug, got '${level}'"; exit 1 ;;
+esac
+
 if ! [[ "${retries}" =~ ^[1-9][0-9]*$ ]]; then
   echo "::error::retries must be a positive integer, got '${retries}'"
   exit 1
@@ -44,6 +56,35 @@ fi
 DOCKER_CONFIG="$(mktemp -d)"
 export DOCKER_CONFIG
 trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
+
+# VEX documents: the scanner container only sees them through a read-only bind mount. A misconfiguration (missing path, a
+# document that is not JSON) fails right away, retrying cannot fix it and an exception silently not applied is worse.
+vex_mount=()
+vex_args=()
+if [[ -n "${IMAGE_SCAN_VEX_LOCATION:-}" ]]; then
+  vex_path="${IMAGE_SCAN_VEX_LOCATION}"
+  if [[ ! -e "${vex_path}" ]]; then
+    echo "::error::vex-location '${vex_path}' does not exist"
+    exit 1
+  fi
+  if [[ -d "${vex_path}" ]]; then
+    vex_host="$(cd "${vex_path}" && pwd)"
+    vex_target="/vex"
+  else
+    vex_host="$(cd "$(dirname "${vex_path}")" && pwd)/$(basename "${vex_path}")"
+    vex_target="/vex/$(basename "${vex_path}")"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    while IFS= read -r -d '' document; do
+      if ! jq empty "${document}" 2>/dev/null; then
+        echo "::error::vex-location: ${document} is not valid JSON"
+        exit 1
+      fi
+    done < <(find "${vex_host}" -type f \( -name '*.json' -o -name '*.jsonld' \) -print0)
+  fi
+  vex_mount=(-v "${vex_host}:${vex_target}:ro")
+  vex_args=(--vex-location "${vex_target}" --vex-author "${IMAGE_SCAN_VEX_AUTHOR:-.*}")
+fi
 
 # Registry credentials are optional, empty values are not passed at all
 registry_env=()
@@ -73,8 +114,10 @@ attempt() {
     -e DOCKER_SCOUT_HUB_USER \
     -e DOCKER_SCOUT_HUB_PASSWORD \
     ${registry_env[@]+"${registry_env[@]}"} \
+    ${vex_mount[@]+"${vex_mount[@]}"} \
     "${SCANNER_IMAGE}" cves \
       --only-severity "${severities}" \
+      ${vex_args[@]+"${vex_args[@]}"} \
       --exit-code \
       --format "${format}" \
       "${image}" >"${output}"
@@ -90,7 +133,7 @@ for ((i = 1; i <= retries; i++)); do
 
   case "${rc}" in
     0) echo "No ${severities} vulnerability found in ${image}"; exit 0 ;;
-    2) echo "::error::${severities} vulnerabilities found in ${image}"; exit 2 ;;
+    2) echo "::${level}::${severities} vulnerabilities found in ${image}"; exit 2 ;;
     *)
       echo "::warning::Scanner setup/infra failure (exit ${rc}) on attempt ${i}/${retries}"
       if ((i < retries)); then sleep $((backoff * i)); fi
