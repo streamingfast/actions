@@ -32,7 +32,7 @@ What the shim passes to the container: `IMAGE_SCAN_*`, `GITHUB_*` and `RUNNER_*`
 4. The workflow checks that `run.sh` pins a built image whose revision label has the same `Dockerfile`, `go.*`, `cmd` and `internal` as the tag, then adds the tags `v1.x.y` and `v1` to the image by digest (no rebuild, an existing version tag is never overwritten).
 5. Move the `v1` git tag: `git tag -f v1 && git push origin v1 --force`. Every caller of `@v1` runs the new release from then on: try it from one repository with `@v1.x.y` before moving `v1`.
 
-Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKERHUB_USER` and `DOCKERHUB_PASSWORD` secrets for the self-scan (organisation secrets).
+Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKER_SCOUT_USER` and `DOCKER_SCOUT_PASSWORD` secrets for the self-scan (organisation secrets).
 
 ## Private package
 
