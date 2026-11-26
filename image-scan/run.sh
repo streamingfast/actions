@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # pinned at release (see image-scan/RELEASING.md), IMAGE_SCAN_RUNNER_IMAGE overrides it for the self-scan of the build workflow
-image="${IMAGE_SCAN_RUNNER_IMAGE:-ghcr.io/streamingfast/image-scan@sha256:0000000000000000000000000000000000000000000000000000000000000000}"
+image="${IMAGE_SCAN_RUNNER_IMAGE:-ghcr.io/streamingfast/image-scan@sha256:1e161e7b09dea515ed54bbd7abbf2bdf28f158fc54ef1bce772abca84e264f9d}"
 
 # The image is a private package: log in to ghcr.io with the token of the caller job (packages: read, and the package must grant
 # its repository access), in a Docker config of its own so nothing lands in the one of the runner. The token stays out of the container.
