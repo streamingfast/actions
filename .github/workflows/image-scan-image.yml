@@ -82,8 +82,8 @@ jobs:
         env:
           IMAGE_SCAN_RUNNER_IMAGE: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           IMAGE_SCAN_IMAGE: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
-          IMAGE_SCAN_DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-          IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          IMAGE_SCAN_DOCKERHUB_USER: ${{ secrets.DOCKER_SCOUT_USER }}
+          IMAGE_SCAN_DOCKERHUB_PASSWORD: ${{ secrets.DOCKER_SCOUT_PASSWORD }}
           IMAGE_SCAN_REGISTRY_USER: ${{ github.actor }}
           IMAGE_SCAN_REGISTRY_PASSWORD: ${{ github.token }}
           IMAGE_SCAN_GITHUB_TOKEN: ${{ github.token }}
