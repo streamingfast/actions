@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.1
+
+### Security
+
+- Ship a clean `ghcr.io/streamingfast/image-scan` scanner image: it moved to Alpine 3.24 with dependency bumps (`klauspost/compress`), which takes its own critical/high findings from 30 to 0. The 7 highs that have no released fix yet are accepted per CVE through `.github/vex/image-scan.openvex.json`, read by the self-scan of the image build. `run.sh` pins the new digest, no input, output or behaviour change for callers of `@v1`
+
 ## v1.5.0
 
 ### Added
