@@ -17,9 +17,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 # The Docker Scout CLI, as published by Docker (Docker Subscription Service Agreement, see the README of image-scan)
 FROM docker/scout-cli:1.30.0@sha256:01f7e63d8ee0668b2c19f09920d7e7eff8d3e507ca931df2b8c00ae19b71d588 AS scout
 
-FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 # git for scan-paths (git diff HEAD^1 HEAD of the bind-mounted checkout), CA certificates for the registries and the GitHub API
-RUN apk add --no-cache ca-certificates git
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates git
 COPY --from=scout /docker-scout /usr/local/bin/docker-scout
 COPY --from=build /out/image-scan /usr/local/bin/image-scan
 # The action runs the container as the runner user (to write GITHUB_OUTPUT), which has no home directory in the image
