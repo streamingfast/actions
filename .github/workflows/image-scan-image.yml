@@ -4,10 +4,10 @@ name: image-scan image
 # on a v1.x.y tag adds the version tags to the image whose digest image-scan/run.sh pins. See image-scan/RELEASING.md.
 on:
   pull_request:
-    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml"]
+    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml", ".github/vex/**"]
   push:
     branches: [main]
-    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml"]
+    paths: ["image-scan/**", ".github/workflows/image-scan-image.yml", ".github/vex/**"]
     tags: ["v1.*.*"]
 
 env:
@@ -88,6 +88,7 @@ jobs:
           IMAGE_SCAN_REGISTRY_PASSWORD: ${{ github.token }}
           IMAGE_SCAN_GITHUB_TOKEN: ${{ github.token }}
           IMAGE_SCAN_PULL_TOKEN: ${{ github.token }}
+          IMAGE_SCAN_VEX_LOCATION: .github/vex/
 
   # A v1.x.y tag adds its version tags to the image pinned by image-scan/run.sh, no rebuild: what is released is what was scanned
   release:

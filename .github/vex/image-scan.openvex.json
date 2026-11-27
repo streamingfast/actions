@@ -1,0 +1,128 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/streamingfast/actions/.github/vex/image-scan.openvex.json",
+  "author": "Platform Team <platform@streamingfast.io>",
+  "timestamp": "2026-11-26T10:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95839"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted in the pull request adding this statement. containerd/v2 2.3.4 vendored in the Docker Scout CLI binary. The flaw is a panic of the containerd daemon transfer service on a malformed manifest annotation, the CLI runs no daemon and a crash would only abort a scan. Fixed in containerd 2.3.7, remove when docker/scout-cli ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-78661"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted in the pull request adding this statement. golang.org/x/net 0.60.0 vendored in the Docker Scout CLI binary. Quadratic cost of the x/net/html parser, neither the scanner nor image-scan parses untrusted HTML. Fixed in x/net 0.62.0, remove when docker/scout-cli ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116591"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "Risk accepted in the pull request adding this statement. klauspost/compress 1.18.7 vendored in the Docker Scout CLI binary. A crafted zstd frame can panic the decoder, the only data decoded are the layers of the image this action scans, built by this repository. Fixed in 1.20.2, remove when docker/scout-cli ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-15558"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Risk accepted in the pull request adding this statement. docker/cli (29.5.3 in the Docker Scout CLI binary, 29.7.2 through go-containerregistry). The flaw is the Windows plugin lookup in C:\\ProgramData\\Docker\\cli-plugins, the image is linux only and loads no CLI plugin. No fixed version published.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111760"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted in the pull request adding this statement. git 2.54.1 of Alpine 3.24. The flaw needs git clone --recurse-submodules of an attacker repository, image-scan only runs git diff on the bind-mounted checkout of the caller and never clones. Fixed in git 2.56.1, remove when Alpine 3.24 ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-105437"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted in the pull request adding this statement. git 2.54.1 of Alpine 3.24. The flaw is in the three-way merge (xdiff), image-scan only runs git diff, never a merge. Fixed in git 2.56.1, remove when Alpine 3.24 ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107891"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/streamingfast/image-scan?repository_url=ghcr.io"
+        },
+        {
+          "@id": "pkg:oci/streamingfast/image-scan"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Risk accepted in the pull request adding this statement. musl 1.2.6-r3 of Alpine 3.24. The flaw is regcomp with an untrusted regular expression, image-scan matches with the Go regexp package and its git diff compiles no pattern from the scanned repository. Fixed in musl 1.2.6-r6, remove when Alpine 3.24 ships it.",
+      "timestamp": "2026-11-26T10:00:00Z"
+    }
+  ]
+}

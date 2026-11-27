@@ -34,6 +34,8 @@ What the shim passes to the container: `IMAGE_SCAN_*`, `GITHUB_*` and `RUNNER_*`
 
 Bootstrap: the first pin of `run.sh` is the digest of the first build, until then the action fails on purpose. The workflow needs the `DOCKER_SCOUT_USER` and `DOCKER_SCOUT_PASSWORD` secrets for the self-scan (organisation secrets).
 
+The self-scan reads `.github/vex/image-scan.openvex.json` (`vex-location`): the CVEs of the vendored Docker Scout CLI and of the Alpine packages that have no released fix yet, each statement with its justification and the fixed version. Remove a statement in the pull request that ships its fix (bump of the `Dockerfile` bases, a new `docker/scout-cli`), the self-scan warns about a statement that matches nothing any more.
+
 ## Private package
 
 The Docker Scout CLI is redistributed in the image under Docker's licence (below), so `ghcr.io/streamingfast/image-scan` is a **private** package. The first push creates it linked to this repository (the `org.opencontainers.image.source` label of the image and annotation of its index), private by default for the organisation.
